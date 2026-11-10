@@ -1,0 +1,36 @@
+services:
+  _defaults:
+    autowire: true
+    autoconfigure: true
+
+  Neox\BoardBundle\:
+    resource: '../src/'
+    exclude:
+      - '../src/DependencyInjection/'
+      - '../src/Entity/'
+      - '../src/Resources/'
+
+  Neox\BoardBundle\Realtime\MercureTurboBroadcaster:
+    arguments:
+      $hubUrl: '%neox_board.realtime.mercure_hub_url%'
+      $publicUrl: '%neox_board.realtime.mercure_public_url%'
+      $jwtSecret: '%neox_board.realtime.mercure_jwt_secret%'
+
+  Neox\BoardBundle\Service\WeatherForecastProvider:
+    arguments:
+      $latitude: '%neox_board.weather.latitude%'
+      $longitude: '%neox_board.weather.longitude%'
+      $timezone: '%neox_board.weather.timezone%'
+      $location: '%neox_board.weather.location%'
+      $enabled: '%neox_board.weather.enabled%'
+      $apiUrl: '%neox_board.weather.api_url%'
+      $apiKey: '%neox_board.weather.api_key%'
+      $schoolCity: '%neox_board.calendar.city%'
+      $schoolZone: '%neox_board.calendar.school_zone%'
+
+  Neox\BoardBundle\Service\CalendarObservancesProvider:
+    arguments:
+      $timezone: '%neox_board.weather.timezone%'
+      $city: '%neox_board.calendar.city%'
+      $schoolZone: '%neox_board.calendar.school_zone%'
+      $enabled: '%neox_board.calendar.enabled%'

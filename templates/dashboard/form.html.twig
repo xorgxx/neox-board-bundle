@@ -1,0 +1,27 @@
+{% if app.request.headers.has('Turbo-Frame') %}<turbo-frame id="neox_board_modal">{% endif %}
+<section class="modal-content">
+  <h1>{{ title }}</h1>
+  {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+  <form method="post" data-turbo-stream action="{{ app.request.uri }}" class="board-form">
+    <input type="hidden" name="_token" value="{{ token }}">
+    <label>{{ kind == 'Widget' ? 'Titre' : 'Nom' }}<input name="title" required maxlength="160" value="{{ link.title|default(section.title|default(widget.title|default(space.title|default('')))) }}"></label>
+    {% if kind == 'Espace' %}
+      <label>Description<input name="description" maxlength="255" value="{{ space.description|default('') }}"></label>
+    {% elseif kind == 'Lien' %}
+      {% set link_url = link.url|default('') %}
+      {% set lower_link_url = link_url|lower %}
+      {% set browser_internal_url = link.browserInternalUrl|default(false) %}
+      {% set link_scheme = lower_link_url starts with 'http://' ? 'http' : 'https' %}
+      {% set link_value = browser_internal_url ? link_url : (lower_link_url starts with 'http://' ? link_url|slice(7) : (lower_link_url starts with 'https://' ? link_url|slice(8) : link_url)) %}
+      <label>URL{% if browser_internal_url %}<input type="text" inputmode="url" autocapitalize="none" name="url" required maxlength="2048" placeholder="about:config ou chrome://settings" value="{{ link_value }}">{% else %}<div class="url-input-group"><span aria-hidden="true">{{ link_scheme }}://</span><input type="text" inputmode="url" autocomplete="url" autocapitalize="none" name="url" required maxlength="2040" placeholder="exemple.com/chemin" value="{{ link_value }}"><input type="hidden" name="url_scheme" value="{{ link_scheme }}"></div>{% endif %}</label>
+    {% elseif kind == 'Section' %}
+      <p class="form-hint">La section sera créée dans « {{ space.title }} ».</p>
+    {% elseif kind == 'Widget' %}
+      <label>Type du widget<input name="type" required pattern="[a-z][a-z0-9_.-]*" maxlength="100" value="{{ widget.type|default('link_list') }}"><small>Identifiant extensible, par exemple link_list ou favorites.</small></label>
+      <label>Configuration JSON<textarea name="configuration" rows="7" maxlength="16384">{{ widget.configuration|default({})|json_encode(constant('JSON_PRETTY_PRINT')) }}</textarea></label>
+      <label class="check-label"><input type="checkbox" name="enabled" value="1" {{ widget.enabled|default(true) ? 'checked' : '' }}> Activé</label>
+    {% endif %}
+    <div class="form-actions"><button class="secondary-button" type="button" data-action="modal#close">Annuler</button><button class="primary-button" type="submit">Enregistrer</button></div>
+  </form>
+</section>
+{% if app.request.headers.has('Turbo-Frame') %}</turbo-frame>{% endif %}

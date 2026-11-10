@@ -1,0 +1,45 @@
+{
+  "name": "xorgxx/neox-board-bundle",
+  "type": "symfony-bundle",
+  "description": "Reusable Symfony dashboard component for organizing website links.",
+  "license": "MIT",
+  "require": {
+    "php": "^8.4",
+    "symfony/config": "^8.0",
+    "symfony/dependency-injection": "^8.0",
+    "symfony/framework-bundle": "^8.0",
+    "symfony/doctrine-bridge": "^8.0",
+    "symfony/doctrine-messenger": "^8.0",
+    "symfony/form": "^8.0",
+    "symfony/security-bundle": "^8.0",
+    "symfony/security-csrf": "^8.0",
+    "symfony/validator": "^8.0",
+    "symfony/uid": "^8.0",
+    "symfony/http-kernel": "^8.0",
+    "symfony/http-client": "^8.0",
+    "symfony/messenger": "^8.0",
+    "doctrine/orm": "^3.3",
+    "doctrine/doctrine-bundle": "^3.0",
+    "doctrine/migrations": "^3.9",
+    "symfony/twig-bundle": "^8.0"
+  },
+  "autoload": {
+    "psr-4": {
+      "Neox\\BoardBundle\\": "src/"
+    }
+  },
+  "autoload-dev": {"psr-4": {"Neox\\BoardBundle\\Tests\\": "tests/"}},
+  "require-dev": {"phpunit/phpunit": "^11.5"},
+  "scripts": {"test": "phpunit"},
+  "suggest": {
+    "symfony/mercure-bundle": "Optional host integration for Mercure publishing; current 0.3 releases do not declare Symfony 8 compatibility.",
+    "symfony/amqp-messenger": "Optional AMQP transport when RabbitMQ is configured by the host application."
+  },
+  "extra": {
+    "symfony": {
+      "bundle": "Neox\\BoardBundle\\NeoxBoardBundle"
+    }
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

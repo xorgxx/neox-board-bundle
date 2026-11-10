@@ -1,0 +1,26 @@
+import { Application } from '@hotwired/stimulus';
+import * as Turbo from '@hotwired/turbo';
+import ModalController from './controllers/modal_controller';
+import ReorderController from './controllers/reorder_controller';
+import SpaceOrderController from './controllers/space_order_controller';
+import ThemeController from './controllers/theme_controller';
+import NavigationController from './controllers/navigation_controller';
+import SidebarController from './controllers/sidebar_controller';
+import SearchController from './controllers/search_controller';
+import BrowserLinkController from './controllers/browser_link_controller';
+import HeaderController from './controllers/header_controller';
+import SpaceCollapseController from './controllers/space_collapse_controller';
+import 'preline';
+
+const app = Application.start();
+app.register('modal', ModalController);
+app.register('reorder', ReorderController);
+app.register('space-order', SpaceOrderController);
+app.register('theme', ThemeController);
+app.register('navigation', NavigationController);
+app.register('sidebar', SidebarController);
+app.register('search', SearchController);
+app.register('browser-link', BrowserLinkController);
+app.register('header', HeaderController);
+app.register('space-collapse', SpaceCollapseController);
+window.NeoxBoard = { Turbo, app };
