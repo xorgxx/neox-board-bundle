@@ -62,7 +62,7 @@ Avant toute implémentation fonctionnelle :
 
 La maquette est une direction visuelle, pas une spécification pixel-perfect. Le produit reste principalement un organisateur de liens : espaces, favoris, recherche et activité sont visibles ; le temps réel est indiqué sobrement.
 
-![Maquette du dashboard Neox Board](images/neox-board-dashboard-mockup.png)
+![Maquette du dashboard Neox Board](images/dashboard-neox-board.png)
 
 ## État actuel
 
