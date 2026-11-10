@@ -12,6 +12,7 @@ import HeaderController from './controllers/header_controller';
 import SpaceCollapseController from './controllers/space_collapse_controller';
 import WidgetLayoutController from './controllers/widget_layout_controller';
 import LinkCheckController from './controllers/link_check_controller';
+import SectionTabsController from './controllers/section_tabs_controller';
 import 'preline';
 
 const app = Application.start();
@@ -27,4 +28,5 @@ app.register('header', HeaderController);
 app.register('space-collapse', SpaceCollapseController);
 app.register('widget-layout', WidgetLayoutController);
 app.register('link-check', LinkCheckController);
+app.register('section-tabs', SectionTabsController);
 window.NeoxBoard = { Turbo, app };

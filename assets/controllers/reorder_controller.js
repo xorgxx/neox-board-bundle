@@ -29,7 +29,7 @@ export default class extends Controller {
     document.dispatchEvent(new CustomEvent('neox-board:drag-start', {
       detail: { element: this.dragged, sourceSpaceId: this.spaceValue },
     }));
-    requestAnimationFrame(() => this.dragged?.classList.add('is-dragging'));
+    this.dragged.classList.add('is-dragging');
   }
 
   receiveDragStart(event) {
