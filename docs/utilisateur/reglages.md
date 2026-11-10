@@ -20,6 +20,8 @@ La météo présente aujourd’hui et les quatre jours suivants. Les indications
 
 Dans Réglages, choisissez **Rechercher les favicons manquants**. Neox tente de récupérer l’icône des raccourcis qui n’en ont pas encore. Les liens qui possèdent déjà une favicon sont ignorés. Si aucune icône n’est trouvée, l’initiale colorée du lien reste visible.
 
+Le bouton **Vérifier les liens actifs** contrôle tous les raccourcis du tableau, y compris les adresses locales de développement comme les domaines `.wip`. Chaque raccourci affiche ensuite un point vert s’il répond, ou orange s’il est inaccessible ou n’a pas encore été vérifié. Le dernier résultat reste enregistré avec le lien. Appliquez la migration `Version20261110225000` pour stocker cet état.
+
 ## Arrière-plan non conservé
 
 Les préférences de couleur du thème et le mode clair/sombre sont stockés localement dans le navigateur. Ils ne suivent donc pas automatiquement le compte sur un autre appareil ou dans un autre navigateur. La localisation, l’arrière-plan et les éléments du tableau sont enregistrés sur le tableau de l’utilisateur.

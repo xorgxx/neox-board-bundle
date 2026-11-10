@@ -12,7 +12,7 @@ final class MercureTurboBroadcaster implements DashboardBroadcaster
     {
         $this->client = HttpClient::create();
     }
-    public function publishRefresh(Board $board): void
+    public function publishRefresh(Board $board, ?string $requestId = null): void
     {
         if (!$this->hubUrl || !$this->jwtSecret) return;
         $topic = $this->topic($board);
@@ -20,7 +20,7 @@ final class MercureTurboBroadcaster implements DashboardBroadcaster
         try {
             $this->client->request('POST', $this->hubUrl, [
                 'headers'=>['Authorization'=>'Bearer '.$token],
-                'body'=>['topic'=>$topic,'data'=>'<turbo-stream action="refresh"></turbo-stream>'],
+                'body'=>['topic'=>$topic,'data'=>$this->refreshStream($requestId)],
             ])->getStatusCode();
         } catch (\Throwable $exception) {
             error_log('Neox Board Mercure publish failed: '.$exception->getMessage());
@@ -33,6 +33,7 @@ final class MercureTurboBroadcaster implements DashboardBroadcaster
         return $this->publicUrl.'?'.http_build_query(['topic'=>$topic,'authorization'=>$this->jwt(['subscribe'=>[$topic]])]);
     }
     private function topic(Board $board):string{return 'urn:neox-board:board:'.$board->getId();}
+    private function refreshStream(?string $requestId): string { return '<turbo-stream action="refresh"'.($requestId !== null ? ' request-id="'.htmlspecialchars($requestId, ENT_QUOTES, 'UTF-8').'"' : '').'></turbo-stream>'; }
     private function jwt(array $rights):string
     {
         $encode=static fn(string $value):string=>rtrim(strtr(base64_encode($value),'+/','-_'),'=');

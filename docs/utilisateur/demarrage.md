@@ -4,7 +4,7 @@
 
 ## Ouvrir Neox Board
 
-Ouvrez la route `/neox-board` de votre application et connectez-vous si nécessaire. Chaque compte dispose de son propre tableau. La barre latérale permet d’accéder à la **Vue d’ensemble**, aux **Favoris**, à l’**Activité**, à l’**Aide** et aux **Réglages**. Sur mobile, ouvrez cette navigation avec le bouton hamburger. Sur ordinateur, le bouton en haut de la barre latérale permet de la replier ou de la déplier.
+Ouvrez la route `/neox-board` de votre application et connectez-vous si nécessaire. Chaque compte dispose de son propre tableau. La barre latérale permet d’accéder à la **Vue d’ensemble**, aux **Favoris**, à l’**Activité**, aux **Widgets**, à l’**Aide** et aux **Réglages**. Sur mobile, ouvrez cette navigation avec le bouton hamburger. Sur ordinateur, le bouton en haut de la barre latérale permet de la replier ou de la déplier.
 
 Les pages s’affichent dans la zone principale. En choisissant un espace depuis la navigation ou un favori, vous ouvrez cet espace dans cette zone.
 
@@ -26,4 +26,4 @@ Les actions de suppression demandent une confirmation avant d’effacer le conte
 
 Si le tableau est vide, créez un espace. Ajoutez-y des liens, puis regroupez-les au besoin avec des sections. Vous pouvez ensuite marquer les éléments importants comme favoris et déplacer les cartes pour adapter la disposition.
 
-Suite : [Espaces](espaces.md) · [Liens et contenu](liens-et-contenu.md)
+Suite : [Espaces](espaces.md) · [Widgets](widgets.md) · [Liens et contenu](liens-et-contenu.md)

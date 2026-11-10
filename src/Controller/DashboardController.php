@@ -5,6 +5,7 @@ use Doctrine\ORM\EntityManagerInterface;
 use Neox\BoardBundle\Entity\{Board,Space,Link,Activity,Section,Widget};
 use Neox\BoardBundle\Realtime\DashboardBroadcaster;
 use Neox\BoardBundle\Service\FaviconFetcher;
+use Neox\BoardBundle\Service\LinkAvailabilityChecker;
 use Neox\BoardBundle\Service\WeatherForecastProvider;
 use Neox\BoardBundle\Service\CalendarObservancesProvider;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
@@ -29,6 +30,7 @@ final class DashboardController extends AbstractController
  #[Route('/favorites',name:'favorites',methods:['GET'])]
  #[Route('/activity',name:'activity',methods:['GET'])]
  #[Route('/settings',name:'settings',methods:['GET'])]
+ #[Route('/widgets',name:'widgets',methods:['GET'])]
  #[Route('/help',name:'help',methods:['GET'])]
  #[Route('/spaces/{spaceId}',name:'space_view',methods:['GET'],requirements:['spaceId'=>'[0-9a-fA-F-]{36}'])]
  public function index(Request $request): Response
@@ -63,12 +65,13 @@ final class DashboardController extends AbstractController
    'neox_board_favorites' => 'favorites',
    'neox_board_activity' => 'activity',
    'neox_board_settings' => 'settings',
+   'neox_board_widgets' => 'widgets',
    'neox_board_help' => 'help',
    'neox_board_space_view' => 'space',
    default => null,
   };
   $panel = $query !== '' ? 'search' : ($routePanel ?? (string) $request->query->get('panel', 'overview'));
-  if (!in_array($panel, ['overview', 'spaces', 'favorites', 'space', 'activity', 'settings', 'help', 'search'], true)) {
+  if (!in_array($panel, ['overview', 'spaces', 'favorites', 'space', 'activity', 'widgets', 'settings', 'help', 'search'], true)) {
    $panel = 'overview';
   }
 
@@ -166,6 +169,8 @@ final class DashboardController extends AbstractController
    'weather_forecast' => $this->weather->getForecast($weatherLocation),
    'weather_location' => $weatherLocation,
    'background_settings' => $board->getBackgroundSettings() ?? ['mode' => 'default', 'color' => '#0b1220'],
+   'weather_widget_enabled' => $board->isWidgetEnabled('weather'),
+   'weather_widget_placement' => $board->getWeatherWidgetPlacement(),
    'date_label' => $dateLabel,
    'calendar_observances' => $this->observances->getForDate(
     $now,
@@ -175,6 +180,42 @@ final class DashboardController extends AbstractController
     $this->weather->getTimezone($weatherLocation),
    ),
   ]);
+ }
+
+ #[Route('/widgets/weather/toggle', name:'widgets_weather_toggle', methods:['POST'])]
+ public function toggleWeatherWidget(Request $request): Response
+ {
+  $board = $this->board();
+  if (!$this->validToken('widget_weather_toggle', $request)) throw $this->createAccessDeniedException();
+  $board->setWidgetEnabled('weather', $request->request->getBoolean('enabled'));
+  $this->em->flush();
+  $requestId = $this->refreshRequestId($request);
+  $this->broadcaster->publishRefresh($board, $requestId);
+  if ($request->headers->has('Turbo-Frame') || str_contains((string) $request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) {
+   return $this->refreshResponse();
+  }
+  return $this->redirectToRoute('neox_board_widgets');
+ }
+
+ #[Route('/widgets/weather/layout', name:'widgets_weather_layout', methods:['POST'])]
+ public function updateWeatherWidgetLayout(Request $request): Response
+ {
+  $board = $this->board();
+  if (!$this->validToken('widget_weather_layout', $request)) throw $this->createAccessDeniedException();
+  $size = (string) $request->request->get('size', 'wide');
+  $column = (int) $request->request->get('column', 0);
+  $position = (string) $request->request->get('position', 'top');
+  if (!in_array($size, ['wide', 'column'], true) || !in_array($column, [0, 1], true) || !in_array($position, ['top', 'bottom'], true)) {
+   throw new BadRequestHttpException('Disposition de widget invalide.');
+  }
+  $board->setWeatherWidgetPlacement($size, $column, $position);
+  $this->em->flush();
+  $requestId = $this->refreshRequestId($request);
+  $this->broadcaster->publishRefresh($board, $requestId);
+  if ($request->headers->has('Turbo-Frame') || str_contains((string) $request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) {
+   return $this->refreshResponse();
+  }
+  return $this->redirectToRoute('neox_board_widgets');
  }
 
  #[Route('/spaces/order',name:'spaces_reorder',methods:['POST'])]
@@ -419,6 +460,22 @@ final class DashboardController extends AbstractController
 
   return $this->completeMutation($request);
  }
+
+ #[Route('/links/check-availability', name:'links_check_availability', methods:['POST'])]
+ public function checkLinksAvailability(Request $request, LinkAvailabilityChecker $checker): JsonResponse
+ {
+  if (!$this->validToken('links_check_availability', $request)) throw $this->createAccessDeniedException();
+  $links = [];
+  foreach ($this->board()->getSpaces() as $space) {
+   foreach ($space->getLinks() as $link) $links[] = $link;
+  }
+  $results = $checker->check($links);
+  $checkedAt = new \DateTimeImmutable();
+  foreach ($results as $index => $result) $links[$index]->setAvailabilityStatus($result['active'], $checkedAt);
+  $this->em->flush();
+  $active = count(array_filter($results, static fn (array $result): bool => $result['active']));
+  return new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results]);
+ }
  #[Route('/links/{id}/open',name:'link_open',methods:['GET'],requirements:['id'=>'[0-9a-fA-F-]{36}'])]
  public function openLink(string $id): Response
  {
@@ -440,7 +497,7 @@ final class DashboardController extends AbstractController
  #[Route('/links/{id}/delete',name:'link_delete',methods:['POST'])]
  public function deleteLink(string $id,Request $r):Response { $link=$this->em->getRepository(Link::class)->find($id);if(!$link||$link->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();if(!$this->csrf->isTokenValid(new CsrfToken('link_delete_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$this->em->remove($link);$this->em->flush();return $this->completeMutation($r); }
  #[Route('/links/{id}/edit',name:'link_edit',methods:['GET','POST'])]
- public function editLink(string $id,Request $r):Response{$link=$this->ownedLink($id);$error=null;if($r->isMethod('POST')){if(!$this->csrf->isTokenValid(new CsrfToken('link_edit_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$previousUrl=$link->getUrl();$link->setTitle(trim((string)$r->request->get('title')));$link->setUrl($this->buildLinkUrl((string)$r->request->get('url', ''), (string)$r->request->get('url_scheme', 'https')));$errors=$this->validator->validate($link);if(count($errors))$error=(string)$errors[0]->getMessage();else{if($previousUrl!==$link->getUrl()){$link->setFaviconFilename(null);$this->favicons->fetchFor($link);}$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Lien','title'=>'Modifier le raccourci','space'=>$link->getSpace(),'link'=>$link,'error'=>$error,'token'=>$this->csrf->getToken('link_edit_'.$id)->getValue()]);}
+ public function editLink(string $id,Request $r):Response{$link=$this->ownedLink($id);$error=null;if($r->isMethod('POST')){if(!$this->csrf->isTokenValid(new CsrfToken('link_edit_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$previousUrl=$link->getUrl();$link->setTitle(trim((string)$r->request->get('title')));$link->setUrl($this->buildLinkUrl((string)$r->request->get('url', ''), (string)$r->request->get('url_scheme', 'https')));$errors=$this->validator->validate($link);if(count($errors))$error=(string)$errors[0]->getMessage();else{if($previousUrl!==$link->getUrl()){$link->setFaviconFilename(null);$link->setAvailabilityStatus(null);$this->favicons->fetchFor($link);}$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Lien','title'=>'Modifier le raccourci','space'=>$link->getSpace(),'link'=>$link,'error'=>$error,'token'=>$this->csrf->getToken('link_edit_'.$id)->getValue()]);}
  #[Route('/links/{id}/favorite',name:'link_favorite',methods:['POST'])]
  public function toggleLinkFavorite(string $id,Request $r):Response{$l=$this->ownedLink($id);if(!$this->csrf->isTokenValid(new CsrfToken('link_favorite_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$l->toggleFavorite();$this->em->flush();return $this->completeMutation($r);}
  #[Route('/spaces/{id}/reorder',name:'space_reorder',methods:['POST'])]
@@ -557,7 +614,9 @@ final class DashboardController extends AbstractController
  public function editWidget(string $id,Request $r):Response{$widget=$this->ownedWidget($id);$error=null;if($r->isMethod('POST')){if(!$this->validToken('widget_edit_'.$id,$r))throw $this->createAccessDeniedException();$this->fillWidget($widget,$r);$error=$this->widgetError($widget,(string)$r->request->get('configuration','{}'));if($error===null){$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Widget','title'=>'Modifier le widget','widget'=>$widget,'space'=>$widget->getSpace(),'error'=>$error,'token'=>$this->csrf->getToken('widget_edit_'.$id)->getValue()]);}
  #[Route('/widgets/{id}/delete',name:'widget_delete',methods:['POST'])]
  public function deleteWidget(string $id,Request $r):Response{$widget=$this->ownedWidget($id);if(!$this->validToken('widget_delete_'.$id,$r))throw $this->createAccessDeniedException();$this->em->remove($widget);$this->em->flush();return $this->completeMutation($r);}
- private function completeMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','Le dashboard a été mis à jour.')); $this->em->flush(); $this->broadcaster->publishRefresh($board); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return new Response('<turbo-stream action="refresh"></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); return $this->redirectToRoute('neox_board_index'); }
+ private function completeMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','Le dashboard a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return $this->refreshResponse(); return $this->redirectToRoute('neox_board_index'); }
+ private function refreshRequestId(Request $request): string { $requestId=(string)$request->headers->get('X-Turbo-Request-Id',''); return preg_match('/^[A-Za-z0-9-]{1,100}$/',$requestId)===1 ? $requestId : bin2hex(random_bytes(16)); }
+ private function refreshResponse(): Response { return new Response('<turbo-stream action="refresh"></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
  private function ownedSpace(string $id):Space{$s=$this->em->getRepository(Space::class)->find($id);if(!$s||$s->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}
  private function ownedLink(string $id):Link{$l=$this->em->getRepository(Link::class)->find($id);if(!$l||$l->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $l;}
  private function ownedSection(string $id):Section{$s=$this->em->getRepository(Section::class)->find($id);if(!$s||$s->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}

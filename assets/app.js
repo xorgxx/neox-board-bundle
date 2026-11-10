@@ -10,6 +10,8 @@ import SearchController from './controllers/search_controller';
 import BrowserLinkController from './controllers/browser_link_controller';
 import HeaderController from './controllers/header_controller';
 import SpaceCollapseController from './controllers/space_collapse_controller';
+import WidgetLayoutController from './controllers/widget_layout_controller';
+import LinkCheckController from './controllers/link_check_controller';
 import 'preline';
 
 const app = Application.start();
@@ -23,4 +25,6 @@ app.register('search', SearchController);
 app.register('browser-link', BrowserLinkController);
 app.register('header', HeaderController);
 app.register('space-collapse', SpaceCollapseController);
+app.register('widget-layout', WidgetLayoutController);
+app.register('link-check', LinkCheckController);
 window.NeoxBoard = { Turbo, app };

@@ -13,15 +13,17 @@ Bienvenue dans le guide de Neox Board. Il explique comment organiser vos espaces
 3. [Gérer les liens, sections et widgets](liens-et-contenu.md)
 4. [Réorganiser par glisser-déposer](organisation.md)
 5. [Rechercher un lien ou utiliser Google](recherche.md)
-6. [Régler l’apparence, la météo et les icônes](reglages.md)
-7. [Utiliser l’aide des pages internes du navigateur](pages-navigateur.md)
-8. [Consulter le dépannage](depannage.md)
+6. [Activer et gérer les widgets](widgets.md)
+7. [Régler l’apparence, la météo et les icônes](reglages.md)
+8. [Utiliser l’aide des pages internes du navigateur](pages-navigateur.md)
+9. [Consulter le dépannage](depannage.md)
 
 ## Repères rapides
 
 - **Vue d’ensemble** affiche les espaces dans deux colonnes indépendantes.
 - **Favoris** rassemble les espaces et les liens marqués d’une étoile.
 - **Activité** affiche les dernières mises à jour du dashboard.
+- **Widgets** permet d’activer ou de désactiver les cartes disponibles sur le tableau.
 - **Aide** donne des raccourcis vers les pages internes de Firefox et d’autres navigateurs.
 - **Réglages** contient les préférences visuelles, la localisation météo et la recherche des favicons.
 
@@ -29,4 +31,4 @@ Les changements de contenu sont enregistrés sur le compte. L’état replié de
 
 ---
 
-Navigation : [Documentation du projet](../README.md) · [Démarrage](demarrage.md) · [Espaces](espaces.md) · [Liens et contenu](liens-et-contenu.md) · [Organisation](organisation.md) · [Recherche](recherche.md) · [Réglages](reglages.md) · [Pages navigateur](pages-navigateur.md) · [Dépannage](depannage.md)
+Navigation : [Documentation du projet](../README.md) · [Démarrage](demarrage.md) · [Espaces](espaces.md) · [Liens et contenu](liens-et-contenu.md) · [Organisation](organisation.md) · [Recherche](recherche.md) · [Widgets](widgets.md) · [Réglages](reglages.md) · [Pages navigateur](pages-navigateur.md) · [Dépannage](depannage.md)

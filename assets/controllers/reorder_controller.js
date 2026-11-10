@@ -236,7 +236,8 @@ export default class extends Controller {
     this.previewMessageTarget.textContent = 'Ajout du lien…';
     this.previewMessageTarget.dataset.state = 'checking';
     try {
-      const response = await fetch(this.createUrlValue, {
+      const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
+      const response = await requestFetch(this.createUrlValue, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -292,7 +293,8 @@ export default class extends Controller {
       sourceItems.forEach((item) => body.append('sourceItems[]', item));
     }
     try {
-      const response = await fetch(this.urlValue, {
+      const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
+      const response = await requestFetch(this.urlValue, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',

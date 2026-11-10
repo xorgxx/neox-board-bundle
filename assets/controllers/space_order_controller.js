@@ -126,7 +126,8 @@ export default class extends Controller {
       column.querySelectorAll(':scope > .space-card').forEach((card) => body.append(`columns[${index}][]`, card.dataset.spaceOrderId));
     });
     try {
-      const response = await fetch(this.urlValue, {
+      const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
+      const response = await requestFetch(this.urlValue, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/vnd.turbo-stream.html' },
         credentials: 'same-origin',
