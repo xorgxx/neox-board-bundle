@@ -21,10 +21,7 @@ final class LinkAvailabilityChecker
     public function check(array $links): array
     {
         $results = [];
-        foreach (array_chunk($links, 20, true) as $batch) {
-            $responses = [];
-            $metadata = [];
-            foreach ($batch as $key => $link) {
+        foreach ($links as $key => $link) {
                 $url = $link->getUrl();
                 $parts = parse_url($url);
                 if (!is_array($parts) || !in_array(strtolower((string) ($parts['scheme'] ?? '')), ['http', 'https'], true) || empty($parts['host'])) {
@@ -33,7 +30,7 @@ final class LinkAvailabilityChecker
                 }
                 try {
                     $options = [
-                        'max_redirects' => 0,
+                        'max_redirects' => 5,
                         'timeout' => 2.0,
                         'max_duration' => 3.0,
                         'headers' => ['Accept' => 'text/html,application/xhtml+xml,*/*;q=0.8'],
@@ -44,34 +41,27 @@ final class LinkAvailabilityChecker
                         $options['resolve'][$host] = $hostGateway;
                         $options['verify_peer'] = false;
                     }
-                    $response = $this->client->request('HEAD', $url, [
-                        ...$options,
-                    ]);
-                    $id = spl_object_id($response);
-                    $responses[$id] = $response;
-                    $metadata[$id] = [$key, $link];
-                } catch (\Throwable) {
-                    $results[$key] = $this->result($link, 'unreachable', 'Inaccessible', false);
-                }
-            }
-
-            if ($responses === []) continue;
-            foreach ($metadata as $id => [$key, $link]) {
-                try {
-                    $status = $responses[$id]->getStatusCode();
+                    $response = $this->client->request('HEAD', $url, $options);
+                    $status = $response->getStatusCode();
+                    // A number of hosts reject HEAD; retry with a body-limited GET.
+                    if (in_array($status, [400, 403, 405, 501], true)) {
+                        $response = $this->client->request('GET', $url, [
+                            ...$options,
+                            'headers' => [...$options['headers'], 'Range' => 'bytes=0-0'],
+                        ]);
+                        $status = $response->getStatusCode();
+                    }
                     [$state, $label, $active] = match (true) {
                         $status >= 200 && $status < 300 => ['active', 'Actif', true],
                         $status >= 300 && $status < 400 => ['redirect', 'Redirection', true],
-                        in_array($status, [401, 403], true) => ['restricted', 'Accès protégé', true],
-                        in_array($status, [405, 501], true) => ['method', 'Site actif (HEAD refusé)', true],
+                        in_array($status, [401, 403, 429], true) => ['restricted', $status === 429 ? 'Actif (limite de requêtes)' : 'Accès protégé', true],
                         in_array($status, [404, 410], true) => ['missing', 'Lien introuvable', false],
                         $status >= 500 => ['server_error', 'Erreur du serveur', false],
                         default => ['unreachable', 'Réponse HTTP '.$status, false],
                     };
                     $results[$key] = $this->result($link, $state, $label, $active);
-                } catch (\Throwable) {
+            } catch (\Throwable) {
                     $results[$key] = $this->result($link, 'unreachable', 'Inaccessible', false);
-                }
             }
         }
 
