@@ -387,7 +387,7 @@ final class DashboardController extends AbstractController
  }
 
  #[Route('/spaces/{id}/links/drop',name:'link_drop',methods:['POST'])]
- public function createDroppedLink(string $id, Request $r): Response
+ public function createDroppedLink(string $id, Request $r, LinkAvailabilityChecker $checker): Response
  {
   $space = $this->ownedSpace($id);
   if (!$this->validToken('link_new_'.$id, $r)) throw $this->createAccessDeniedException();
@@ -400,8 +400,8 @@ final class DashboardController extends AbstractController
   if ($inspection['ready'] === []) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Tous ces liens existent déjà dans votre tableau.', 'items' => $inspection['items']], 409);
   foreach ($inspection['ready'] as $link) {
    $this->positionDroppedLink($space, $link, $sectionId);
-   // Keep single-link favicon behavior; fetching a batch synchronously would block the drop.
-   if (count($inspection['ready']) === 1) $this->favicons->fetchFor($link);
+   // Check a single dropped link immediately; large drops stay asynchronous by batch.
+   if (count($inspection['ready']) === 1) $this->inspectAddedLink($link, $checker);
    $space->addLink($link);
   }
   $this->em->flush();
@@ -409,7 +409,7 @@ final class DashboardController extends AbstractController
  }
 
  #[Route('/spaces/{id}/links/new',name:'link_new',methods:['GET','POST'])]
- public function newLink(string $id, Request $request): Response
+ public function newLink(string $id, Request $request, LinkAvailabilityChecker $checker): Response
  {
   $space = $this->ownedSpace($id);
   $link = new Link();
@@ -430,7 +430,7 @@ final class DashboardController extends AbstractController
      $error = 'Ce lien existe déjà dans votre tableau.';
     } else {
      $link->setPosition($this->nextMenuPosition($space));
-     $this->favicons->fetchFor($link);
+     $this->inspectAddedLink($link, $checker);
      $space->addLink($link);
      $this->em->flush();
      return $this->completeMutation($request);
@@ -465,43 +465,6 @@ final class DashboardController extends AbstractController
   }
   return $response;
  }
- #[Route('/favicons/search',name:'favicons_search',methods:['POST'])]
- public function searchMissingFavicons(Request $request): Response
- {
-  if (!$this->csrf->isTokenValid(new CsrfToken('favicon_search', (string) $request->request->get('_token')))) {
-   throw $this->createAccessDeniedException();
-  }
-
-  $board = $this->board();
-  $links = [];
-  foreach ($board->getSpaces() as $space) foreach ($space->getLinks() as $link) $links[] = $link;
-
-  if (str_contains((string) $request->headers->get('Accept'), 'application/json')) {
-   $total = count($links);
-   $offset = min(max(0, $request->request->getInt('offset')), $total);
-   $batch = array_slice($links, $offset, 2);
-   $found = 0;
-   foreach ($batch as $link) {
-    $hadFavicon = $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null;
-    if (!$hadFavicon) $this->favicons->fetchFor($link);
-    if (!$hadFavicon && $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null) $found++;
-   }
-   $this->em->flush();
-   $processed = $offset + count($batch);
-   $done = $processed >= $total;
-   if ($done && $total > 0) $this->broadcaster->publishRefresh($board, $this->refreshRequestId($request));
-
-   return new JsonResponse(['total' => $total, 'processed' => $processed, 'found' => $found, 'done' => $done]);
-  }
-
-  foreach ($links as $link) {
-   $filename = $link->getFaviconFilename();
-   if ($filename === null || $this->favicons->getPath($filename) === null) $this->favicons->fetchFor($link);
-  }
-  $this->em->flush();
-  return $this->completeMutation($request);
- }
-
  #[Route('/links/check-availability', name:'links_check_availability', methods:['POST'])]
  public function checkLinksAvailability(Request $request, LinkAvailabilityChecker $checker): JsonResponse
  {
@@ -515,23 +478,34 @@ final class DashboardController extends AbstractController
   if (str_contains((string) $request->headers->get('Accept'), 'application/json')) {
    $total = count($links);
    $offset = min(max(0, $request->request->getInt('offset')), $total);
-   $batch = array_slice($links, $offset, 4);
+   $batch = array_slice($links, $offset, 2);
    $results = $checker->check($batch);
    $checkedAt = new \DateTimeImmutable();
-   foreach ($results as $index => $result) $batch[$index]->setAvailabilityStatus($result['active'], $checkedAt);
+   $faviconsFound = 0;
+   foreach ($results as $index => $result) {
+    $link = $batch[$index];
+    $link->setAvailabilityStatus($result['active'], $checkedAt);
+    $hadFavicon = $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null;
+    if (!$hadFavicon) $this->favicons->fetchFor($link);
+    if (!$hadFavicon && $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null) $faviconsFound++;
+   }
    $this->em->flush();
    $processed = $offset + count($batch);
    $done = $processed >= $total;
    if ($done && $total > 0) $this->broadcaster->publishRefresh($board, $this->refreshRequestId($request));
    $active = count(array_filter($results, static fn (array $result): bool => $result['active']));
-   $response = new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results, 'total' => $total, 'processed' => $processed, 'done' => $done]);
+   $response = new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results, 'faviconsFound' => $faviconsFound, 'total' => $total, 'processed' => $processed, 'done' => $done]);
    $response->headers->set('Cache-Control', 'private, no-store');
    return $response;
   }
 
   $results = $checker->check($links);
   $checkedAt = new \DateTimeImmutable();
-  foreach ($results as $index => $result) $links[$index]->setAvailabilityStatus($result['active'], $checkedAt);
+  foreach ($results as $index => $result) {
+   $link = $links[$index];
+   $link->setAvailabilityStatus($result['active'], $checkedAt);
+   if ($link->getFaviconFilename() === null || $this->favicons->getPath($link->getFaviconFilename()) === null) $this->favicons->fetchFor($link);
+  }
   $this->em->flush();
   $active = count(array_filter($results, static fn (array $result): bool => $result['active']));
   return new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results]);
@@ -678,6 +652,12 @@ final class DashboardController extends AbstractController
  private function completeOrderMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','L’ordre du tableau a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return new Response('', 204); return $this->redirectToRoute('neox_board_index'); }
  private function refreshRequestId(Request $request): string { $requestId=(string)$request->headers->get('X-Turbo-Request-Id',''); return preg_match('/^[A-Za-z0-9-]{1,100}$/',$requestId)===1 ? $requestId : bin2hex(random_bytes(16)); }
  private function refreshResponse(): Response { return new Response('<turbo-stream action="refresh" method="morph" scroll="preserve"></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
+ private function inspectAddedLink(Link $link, LinkAvailabilityChecker $checker): void
+ {
+  $this->favicons->fetchFor($link);
+  $result = $checker->check([$link])[0] ?? null;
+  if ($result !== null) $link->setAvailabilityStatus($result['active'], new \DateTimeImmutable());
+ }
  private function ownedSpace(string $id):Space{$s=$this->em->getRepository(Space::class)->find($id);if(!$s||$s->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}
  private function ownedLink(string $id):Link{$l=$this->em->getRepository(Link::class)->find($id);if(!$l||$l->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $l;}
  private function ownedSection(string $id):Section{$s=$this->em->getRepository(Section::class)->find($id);if(!$s||$s->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}

@@ -13,7 +13,6 @@ import SpaceCollapseController from './controllers/space_collapse_controller';
 import WidgetLayoutController from './controllers/widget_layout_controller';
 import LinkCheckController from './controllers/link_check_controller';
 import SectionTabsController from './controllers/section_tabs_controller';
-import FaviconSearchController from './controllers/favicon_search_controller';
 import 'preline';
 
 const app = Application.start();
@@ -30,7 +29,6 @@ app.register('space-collapse', SpaceCollapseController);
 app.register('widget-layout', WidgetLayoutController);
 app.register('link-check', LinkCheckController);
 app.register('section-tabs', SectionTabsController);
-app.register('favicon-search', FaviconSearchController);
 
 const movementFocusKey = 'neox-board:movement-focus';
 function rememberMovementFocus(location) {
@@ -84,4 +82,4 @@ document.addEventListener('turbo:morph', () => {
   });
 });
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
-document.cookie = 'neox_board_asset=202611121959; Path=/; Max-Age=2592000; SameSite=Lax';
+document.cookie = 'neox_board_asset=202611122000; Path=/; Max-Age=2592000; SameSite=Lax';

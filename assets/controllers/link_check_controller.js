@@ -2,7 +2,7 @@ import { Controller } from '@hotwired/stimulus';
 
 export default class extends Controller {
   static values = { url: String, token: String };
-  static targets = ['button', 'icon', 'spinner', 'progress', 'status', 'results'];
+  static targets = ['button', 'icon', 'spinner', 'progress', 'status'];
 
   async check(event) {
     event.preventDefault();
@@ -15,11 +15,10 @@ export default class extends Controller {
     this.progressTarget.hidden = false;
     this.progressTarget.removeAttribute('value');
     this.statusTarget.textContent = 'Préparation de la vérification des liens…';
-    this.resultsTarget.replaceChildren();
     let offset = 0;
     let total = null;
     let active = 0;
-    const checkedResults = [];
+    let faviconsFound = 0;
 
     try {
       while (total === null || offset < total) {
@@ -40,18 +39,17 @@ export default class extends Controller {
         total = data.total;
         offset = data.processed;
         active += data.active;
-        checkedResults.push(...data.results);
+        faviconsFound += data.faviconsFound;
         data.results.forEach((result) => this.updateIndicator(result));
         this.progressTarget.max = Math.max(total, 1);
         this.progressTarget.value = offset;
-        this.statusTarget.textContent = `Vérification en cours : ${offset} / ${total} liens · ${active} actif${active > 1 ? 's' : ''}.`;
-        this.renderUnavailable(checkedResults);
+        this.statusTarget.textContent = `Analyse en cours : ${offset} / ${total} liens · ${active} accessibles · ${faviconsFound} favicon${faviconsFound > 1 ? 's' : ''} récupérée${faviconsFound > 1 ? 's' : ''}.`;
         if (data.done) break;
       }
 
       this.statusTarget.textContent = total === 0
-        ? 'Aucun lien à vérifier.'
-        : `${active} lien${active > 1 ? 's' : ''} actif${active > 1 ? 's' : ''} sur ${total}.`;
+        ? 'Aucun lien à analyser.'
+        : `${active} / ${total} liens accessibles · ${faviconsFound} favicon${faviconsFound > 1 ? 's' : ''} récupérée${faviconsFound > 1 ? 's' : ''}.`;
     } catch {
       this.statusTarget.textContent = offset > 0
         ? `Vérification interrompue après ${offset} / ${total} liens. Réessaie pour terminer.`
@@ -74,23 +72,4 @@ export default class extends Controller {
     indicator.setAttribute('aria-label', result.label);
   }
 
-  renderUnavailable(results) {
-    const unavailable = results.filter((result) => !result.active);
-    this.resultsTarget.replaceChildren();
-    if (unavailable.length === 0) return;
-
-    const heading = document.createElement('b');
-    heading.textContent = 'Liens à vérifier';
-    const list = document.createElement('ul');
-    unavailable.forEach((result) => {
-      const item = document.createElement('li');
-      const title = document.createElement('span');
-      title.textContent = result.title;
-      const status = document.createElement('small');
-      status.textContent = result.label;
-      item.append(title, status);
-      list.append(item);
-    });
-    this.resultsTarget.append(heading, list);
-  }
 }
