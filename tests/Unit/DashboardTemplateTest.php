@@ -62,7 +62,7 @@ final class DashboardTemplateTest extends TestCase
         self::assertLessThan(strpos($html, 'data-space-order-id="'.$rightSpace->getId().'"'), $rightColumn);
         self::assertLessThan($rightColumn, strpos($html, 'data-space-order-id="'.$leftSpace->getId().'"'));
         self::assertStringContainsString('dashboard.css', $html);
-        self::assertStringContainsString('<link rel="icon" type="image/png" href="/favicon.png">', $html);
+        self::assertStringContainsString('<link rel="icon" type="image/png" href="/favicon.png?v=2">', $html);
         self::assertStringContainsString('<meta name="csp-nonce" content="test-board-nonce">', $html);
         self::assertStringContainsString('data-turbo-confirm="Supprimer cet espace et ses liens ?"', $html);
         self::assertStringContainsString('data-turbo-confirm="Supprimer cette section ?"', $html);

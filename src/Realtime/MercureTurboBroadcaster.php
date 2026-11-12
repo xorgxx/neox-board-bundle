@@ -33,7 +33,7 @@ final class MercureTurboBroadcaster implements DashboardBroadcaster
         return $this->publicUrl.'?'.http_build_query(['topic'=>$topic,'authorization'=>$this->jwt(['subscribe'=>[$topic]])]);
     }
     private function topic(Board $board):string{return 'urn:neox-board:board:'.$board->getId();}
-    private function refreshStream(?string $requestId): string { return '<turbo-stream action="refresh" method="morph" scroll="preserve"'.($requestId !== null ? ' request-id="'.htmlspecialchars($requestId, ENT_QUOTES, 'UTF-8').'"' : '').'></turbo-stream>'; }
+    private function refreshStream(?string $requestId): string { return '<turbo-stream action="refresh" method="replace" scroll="preserve"'.($requestId !== null ? ' request-id="'.htmlspecialchars($requestId, ENT_QUOTES, 'UTF-8').'"' : '').'></turbo-stream>'; }
     private function jwt(array $rights):string
     {
         $encode=static fn(string $value):string=>rtrim(strtr(base64_encode($value),'+/','-_'),'=');
