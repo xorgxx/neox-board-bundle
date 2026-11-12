@@ -57,6 +57,14 @@ export default class extends Controller {
       this.addTab(tabs, list, this.generalGroup);
     }
     groups.forEach((group) => this.addTab(tabs, list, group));
+    const selectedGroup = [...tabs.querySelectorAll('.section-tab-item')]
+      .find((item) => item.dataset.sectionId === this.selectedSectionId);
+    if (selectedGroup) {
+      const group = [...groups, ...(this.generalGroup ? [this.generalGroup] : [])]
+        .find((candidate) => candidate.id === this.selectedSectionId);
+      if (group) this.selectTab(selectedGroup.querySelector('.section-tab'), list, group);
+    }
+    this.selectedSectionId = null;
     const preview = this.element.querySelector('.drop-link-preview');
     if (preview) tabs.after(preview);
   }
@@ -64,6 +72,29 @@ export default class extends Controller {
   disconnect() {
     document.removeEventListener('neox-board:drag-start', this.onGlobalDragStart);
     document.removeEventListener('neox-board:drag-end', this.onGlobalDragEnd);
+  }
+
+  prepareForMorph() {
+    if (!this.tabs?.isConnected || !this.list) return;
+
+    this.selectedSectionId = this.tabs.querySelector('.section-tab[aria-selected="true"]')
+      ?.closest('.section-tab-item')?.dataset.sectionId;
+    this.groups.forEach((group) => {
+      const item = [...this.tabs.querySelectorAll('.section-tab-item')]
+        .find((candidate) => candidate.dataset.sectionId === group.id);
+      const actions = item?.querySelector('.section-divider-actions');
+      if (actions && group.divider) group.divider.append(actions);
+    });
+    this.tabs.remove();
+    this.tabs = null;
+    this.list.querySelectorAll(':scope > .section-divider, :scope > .link-row').forEach((item) => { item.hidden = false; });
+    this.element.querySelector('.section-tab-empty')?.remove();
+  }
+
+  rebuildAfterMorph() {
+    if (!this.element.isConnected || this.tabs?.isConnected) return;
+    this.disconnect();
+    this.connect();
   }
 
   addTab(tabs, list, group) {

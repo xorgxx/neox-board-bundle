@@ -193,7 +193,7 @@ final class DashboardController extends AbstractController
   $requestId = $this->refreshRequestId($request);
   $this->broadcaster->publishRefresh($board, $requestId);
   if ($request->headers->has('Turbo-Frame') || str_contains((string) $request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) {
-   return $this->refreshResponse($requestId);
+   return $this->refreshResponse();
   }
   return $this->redirectToRoute('neox_board_widgets');
  }
@@ -214,7 +214,7 @@ final class DashboardController extends AbstractController
   $requestId = $this->refreshRequestId($request);
   $this->broadcaster->publishRefresh($board, $requestId);
   if ($request->headers->has('Turbo-Frame') || str_contains((string) $request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) {
-   return $this->refreshResponse($requestId);
+   return $this->refreshResponse();
   }
   return $this->redirectToRoute('neox_board_widgets');
  }
@@ -635,10 +635,10 @@ final class DashboardController extends AbstractController
  public function editWidget(string $id,Request $r):Response{$widget=$this->ownedWidget($id);$error=null;if($r->isMethod('POST')){if(!$this->validToken('widget_edit_'.$id,$r))throw $this->createAccessDeniedException();$this->fillWidget($widget,$r);$error=$this->widgetError($widget,(string)$r->request->get('configuration','{}'));if($error===null){$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Widget','title'=>'Modifier le widget','widget'=>$widget,'space'=>$widget->getSpace(),'error'=>$error,'token'=>$this->csrf->getToken('widget_edit_'.$id)->getValue()]);}
  #[Route('/widgets/{id}/delete',name:'widget_delete',methods:['POST'])]
  public function deleteWidget(string $id,Request $r):Response{$widget=$this->ownedWidget($id);if(!$this->validToken('widget_delete_'.$id,$r))throw $this->createAccessDeniedException();$this->em->remove($widget);$this->em->flush();return $this->completeMutation($r);}
- private function completeMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','Le dashboard a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return $this->refreshResponse($requestId); return $this->redirectToRoute('neox_board_index'); }
+ private function completeMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','Le dashboard a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return $this->refreshResponse(); return $this->redirectToRoute('neox_board_index'); }
  private function completeOrderMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','L’ordre du tableau a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return new Response('', 204); return $this->redirectToRoute('neox_board_index'); }
  private function refreshRequestId(Request $request): string { $requestId=(string)$request->headers->get('X-Turbo-Request-Id',''); return preg_match('/^[A-Za-z0-9-]{1,100}$/',$requestId)===1 ? $requestId : bin2hex(random_bytes(16)); }
- private function refreshResponse(?string $requestId = null): Response { $request = $requestId !== null ? ' request-id="'.htmlspecialchars($requestId, ENT_QUOTES, 'UTF-8').'"' : ''; return new Response('<turbo-stream action="refresh" method="replace" scroll="preserve"'.$request.'></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
+ private function refreshResponse(): Response { return new Response('<turbo-stream action="refresh" method="morph" scroll="preserve"></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
  private function ownedSpace(string $id):Space{$s=$this->em->getRepository(Space::class)->find($id);if(!$s||$s->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}
  private function ownedLink(string $id):Link{$l=$this->em->getRepository(Link::class)->find($id);if(!$l||$l->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $l;}
  private function ownedSection(string $id):Section{$s=$this->em->getRepository(Section::class)->find($id);if(!$s||$s->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}

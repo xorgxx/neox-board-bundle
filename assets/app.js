@@ -67,5 +67,19 @@ function restoreMovementFocus() {
 }
 
 document.addEventListener('turbo:load', restoreMovementFocus);
+document.addEventListener('turbo:before-render', () => {
+  const modal = document.querySelector('.board-modal');
+  if (modal?.open) modal.close();
+  document.querySelectorAll('[data-controller~="section-tabs"]').forEach((element) => {
+    app.getControllerForElementAndIdentifier(element, 'section-tabs')?.prepareForMorph();
+  });
+});
+document.addEventListener('turbo:morph', () => {
+  requestAnimationFrame(() => {
+    document.querySelectorAll('[data-controller~="section-tabs"]').forEach((element) => {
+      app.getControllerForElementAndIdentifier(element, 'section-tabs')?.rebuildAfterMorph();
+    });
+  });
+});
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
 document.cookie = 'neox_board_asset=202611121956; Path=/; Max-Age=2592000; SameSite=Lax';

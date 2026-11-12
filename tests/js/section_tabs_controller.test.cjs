@@ -119,6 +119,29 @@ function dispatchDrop(target, type, clientX = 1) {
   return event;
 }
 
+test('section tabs survive a Turbo morph and keep the selected section', async (t) => {
+  const board = await setupBoard([cardMarkup('space-a', [
+    { id: 'alpha', title: 'Alpha', links: [{ id: 'link-a', title: 'A' }] },
+    { id: 'beta', title: 'Beta', links: [{ id: 'link-b', title: 'B' }] },
+  ])]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+
+  const sections = sectionController(board.app, 'space-a');
+  const beta = sections.groups.find((group) => group.id === 'beta');
+  sections.selectTab(beta.tab, sections.list, beta);
+
+  sections.prepareForMorph();
+  assert.equal(document.querySelector('.section-tabs'), null, 'generated tabs are removed before morphing');
+  assert.equal(beta.divider.querySelector('.section-divider-actions') !== null, true, 'section actions return to the server-rendered divider');
+  assert.equal(document.querySelector('[data-link-id="link-a"]').hidden, false, 'the pre-morph list is restored');
+
+  sections.rebuildAfterMorph();
+  const rebuilt = sectionController(board.app, 'space-a');
+  assert.ok(rebuilt.tabs?.isConnected, 'tabs are rebuilt after morphing');
+  assert.equal(rebuilt.tabs.querySelector('[data-section-id="beta"] .section-tab').getAttribute('aria-selected'), 'true');
+  assert.equal(document.querySelector('[data-link-id="link-a"]').hidden, true, 'links remain filtered to the selected tab');
+});
+
 async function waitForRequest(requests) {
   for (let i = 0; i < 10 && requests.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
   assert.ok(requests.length > 0, 'expected a reorder request');
