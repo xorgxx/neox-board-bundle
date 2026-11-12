@@ -1,7 +1,7 @@
 import { Controller } from '@hotwired/stimulus';
 
 export default class extends Controller {
-  static values = { url: String, token: String, space: String, checkUrl: String, createUrl: String, createToken: String };
+  static values = { url: String, token: String, space: String, checkUrl: String, createUrl: String, createToken: String, tokenUrl: String };
   static targets = ['dropPreview', 'previewTitle', 'previewUrl', 'previewMessage', 'previewSection', 'previewKind', 'previewItems', 'confirmButton'];
 
   static maxExternalDropLinks = 100;
@@ -292,6 +292,24 @@ export default class extends Controller {
     return body;
   }
 
+  async requestWithFreshDropToken(url, options, requestFetch = fetch) {
+    const response = await requestFetch(url, options);
+    if (response.status !== 403 || !this.hasTokenUrlValue) return response;
+
+    const tokenResponse = await fetch(this.tokenUrlValue, {
+      headers: { Accept: 'application/json' },
+      credentials: 'same-origin',
+    });
+    if (!tokenResponse.ok || !tokenResponse.headers?.get('content-type')?.includes('application/json')) return response;
+    const result = await tokenResponse.json().catch(() => ({}));
+    if (typeof result.token !== 'string' || result.token === '') return response;
+
+    this.createTokenValue = result.token;
+    const body = new URLSearchParams(options.body || '');
+    body.set('_token', result.token);
+    return requestFetch(url, { ...options, body });
+  }
+
   renderPreviewItems(items) {
     if (!this.hasPreviewItemsTarget) return;
     this.previewItemsTarget.replaceChildren();
@@ -339,13 +357,21 @@ export default class extends Controller {
     this.confirmButtonTarget.disabled = true;
     const body = this.droppedLinksBody(links);
     try {
-      const response = await fetch(this.checkUrlValue, {
+      const response = await this.requestWithFreshDropToken(this.checkUrlValue, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         credentials: 'same-origin',
         body,
         signal: abort.signal,
       });
+      if (!response.ok) {
+        if (response.status === 403) throw new Error('drop-session-expired');
+        const result = await response.json().catch(() => ({}));
+        this.previewMessageTarget.textContent = result.message || 'Impossible de vérifier cette URL.';
+        this.previewMessageTarget.hidden = false;
+        this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : 'invalid';
+        return;
+      }
       const result = await response.json();
       if (checkId !== this.previewCheckId || this.pendingDroppedLinks !== links) return;
       if (Array.isArray(result.items)) this.renderPreviewItems(result.items);
@@ -359,7 +385,9 @@ export default class extends Controller {
     } catch (error) {
       if (checkId !== this.previewCheckId || abort.signal.aborted) return;
       console.error(error);
-      this.previewMessageTarget.textContent = this.pendingDroppedLinks?.length > 1 ? 'Impossible de vérifier les URL du lot. Réessayez.' : 'Impossible de vérifier cette URL. Réessayez.';
+      this.previewMessageTarget.textContent = error.message === 'drop-session-expired'
+        ? 'La session a expiré. Reconnectez-vous puis réessayez.'
+        : (this.pendingDroppedLinks?.length > 1 ? 'Impossible de vérifier les URL du lot. Réessayez.' : 'Impossible de vérifier cette URL. Réessayez.');
       this.previewMessageTarget.hidden = false;
       this.previewMessageTarget.dataset.state = 'invalid';
     }
@@ -384,7 +412,7 @@ export default class extends Controller {
     this.previewMessageTarget.dataset.state = 'checking';
     try {
       const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
-      const response = await requestFetch(this.createUrlValue, {
+      const response = await this.requestWithFreshDropToken(this.createUrlValue, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -392,11 +420,13 @@ export default class extends Controller {
         },
         credentials: 'same-origin',
         body,
-      });
+      }, requestFetch);
       if (!response.ok) {
         const result = await response.json().catch(() => ({}));
         if (Array.isArray(result.items)) this.renderPreviewItems(result.items);
-        this.previewMessageTarget.textContent = result.message || 'Le lien n’a pas pu être ajouté.';
+        this.previewMessageTarget.textContent = response.status === 403
+          ? 'La session a expiré. Reconnectez-vous puis réessayez.'
+          : (result.message || 'Le lien n’a pas pu être ajouté.');
         this.previewMessageTarget.hidden = false;
         this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : 'invalid';
         this.confirmButtonTarget.disabled = true;

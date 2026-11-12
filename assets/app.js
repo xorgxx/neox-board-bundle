@@ -68,4 +68,4 @@ function restoreMovementFocus() {
 
 document.addEventListener('turbo:load', restoreMovementFocus);
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
-document.cookie = 'neox_board_asset=202611121900; Path=/; Max-Age=2592000; SameSite=Lax';
+document.cookie = 'neox_board_asset=202611121956; Path=/; Max-Age=2592000; SameSite=Lax';

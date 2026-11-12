@@ -42,6 +42,7 @@ function cardMarkup(spaceId, sections, ungroupedLinks = []) {
       data-reorder-space-value="${spaceId}" data-reorder-url-value="/spaces/${spaceId}/reorder"
       data-reorder-token-value="token-${spaceId}"
       data-reorder-check-url-value="/spaces/${spaceId}/links/check"
+      data-reorder-token-url-value="/spaces/${spaceId}/links/drop-token"
       data-reorder-create-url-value="/spaces/${spaceId}/links/drop"
       data-reorder-create-token-value="token-${spaceId}">
       <div class="space-card-content" data-controller="section-tabs">
@@ -370,6 +371,55 @@ test('external URL in General is checked, submitted to General, and refreshes th
   assert.equal(reorder.dropPreviewTarget.hidden, true);
 });
 
+test('external link drop renews an expired CSRF token for validation and submission without reloading', async (t) => {
+  const board = await setupBoard([cardMarkup('space-a', [])]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+  const reorder = reorderController(board.app, 'space-a');
+  const requests = [];
+  let tokenVersion = 0;
+  let renderedStream = '';
+  board.window.NeoxBoard.Turbo = { renderStreamMessage: (stream) => { renderedStream = stream; } };
+  global.fetch = async (url, options = {}) => {
+    const body = new URLSearchParams(options.body || '');
+    requests.push({ url, body });
+    if (url.endsWith('/drop-token')) {
+      tokenVersion += 1;
+      return {
+        ok: true,
+        status: 200,
+        headers: { get: () => 'application/json' },
+        json: async () => ({ token: `fresh-token-${tokenVersion}` }),
+      };
+    }
+    if (url.endsWith('/check')) {
+      if (body.get('_token') === 'token-space-a') return { ok: false, status: 403 };
+      return { ok: true, status: 200, json: async () => ({ valid: true, duplicate: false }) };
+    }
+    if (url.endsWith('/drop')) {
+      if (body.get('_token') === 'fresh-token-1') return { ok: false, status: 403 };
+      return { ok: true, status: 200, text: async () => '<turbo-stream action="refresh"></turbo-stream>' };
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+
+  await reorder.previewDroppedLink({ title: 'Link', url: 'https://example.test', sectionId: '' });
+  assert.equal(reorder.confirmButtonTarget.disabled, false);
+  assert.equal(reorder.createTokenValue, 'fresh-token-1');
+  await reorder.confirmDroppedLink();
+
+  assert.equal(tokenVersion, 2);
+  assert.deepEqual(requests.map(({ url, body }) => [url.split('/').at(-1), body.get('_token')]), [
+    ['check', 'token-space-a'],
+    ['drop-token', null],
+    ['check', 'fresh-token-1'],
+    ['drop', 'fresh-token-1'],
+    ['drop-token', null],
+    ['drop', 'fresh-token-2'],
+  ]);
+  assert.equal(renderedStream, '<turbo-stream action="refresh"></turbo-stream>');
+  assert.equal(reorder.dropPreviewTarget.hidden, true);
+});
+
 test('a late validation response cannot enable a newer invalid preview', async (t) => {
   const board = await setupBoard([cardMarkup('space-a', [])]);
   t.after(() => { board.app.stop(); board.dom.window.close(); });
@@ -378,9 +428,9 @@ test('a late validation response cannot enable a newer invalid preview', async (
   global.fetch = () => new Promise((resolve) => { pending.push(resolve); });
   const first = reorder.previewDroppedLink({ title: 'First', url: 'https://first.example', sectionId: '' });
   const second = reorder.previewDroppedLink({ title: 'Second', url: 'https://second.example', sectionId: '' });
-  pending[1]({ json: async () => ({ valid: false, duplicate: true, message: 'Doublon' }) });
+  pending[1]({ ok: true, status: 200, json: async () => ({ valid: false, duplicate: true, message: 'Doublon' }) });
   await second;
-  pending[0]({ json: async () => ({ valid: true, duplicate: false }) });
+  pending[0]({ ok: true, status: 200, json: async () => ({ valid: true, duplicate: false }) });
   await first;
   assert.equal(reorder.previewTitleTarget.textContent, 'Second');
   assert.equal(reorder.previewMessageTarget.textContent, 'Doublon');

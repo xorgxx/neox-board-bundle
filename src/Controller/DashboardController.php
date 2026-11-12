@@ -356,6 +356,14 @@ final class DashboardController extends AbstractController
 
  #[Route('/spaces/new',name:'space_new',methods:['GET','POST'])]
  public function newSpace(Request $r):Response { $board=$this->board();$space=new Space();$error=null;if($r->isMethod('POST')){if(!$this->csrf->isTokenValid(new CsrfToken('space_new',(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$title=trim((string)$r->request->get('title'));$desc=trim((string)$r->request->get('description'));if($title===''||mb_strlen($title)>120)$error='Le nom est requis et limité à 120 caractères.';else{$space->setTitle($title);$space->setDescription(mb_substr($desc,0,255));$counts=[0=>0,1=>0];$positions=[0=>-1,1=>-1];foreach($board->getSpaces() as $existing){$column=$existing->getColumnIndex();$counts[$column]++;$positions[$column]=max($positions[$column],$existing->getPosition());}$column=$counts[0]<=$counts[1]?0:1;$space->setColumnIndex($column);$space->setPosition($positions[$column]+1);$board->addSpace($space);$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Espace','title'=>'Nouvel espace','space'=>$space,'error'=>$error,'token'=>$this->csrf->getToken('space_new')->getValue()]); }
+ #[Route('/spaces/{id}/links/drop-token',name:'link_drop_token',methods:['GET'])]
+ public function refreshDroppedLinkToken(string $id): JsonResponse
+ {
+  $this->ownedSpace($id);
+  $response = new JsonResponse(['token' => $this->csrf->getToken('link_new_'.$id)->getValue()]);
+  $response->headers->set('Cache-Control', 'private, no-store');
+  return $response;
+ }
  #[Route('/spaces/{id}/edit',name:'space_edit',methods:['GET','POST'])]
  public function editSpace(string $id,Request $r):Response { $space=$this->ownedSpace($id);$error=null;if($r->isMethod('POST')){if(!$this->csrf->isTokenValid(new CsrfToken('space_edit_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$title=trim((string)$r->request->get('title'));if($title===''||mb_strlen($title)>120)$error='Le nom est requis et limité à 120 caractères.';else{$space->setTitle($title);$space->setDescription(mb_substr(trim((string)$r->request->get('description')),0,255));$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Espace','title'=>'Modifier l’espace','space'=>$space,'error'=>$error,'token'=>$this->csrf->getToken('space_edit_'.$id)->getValue()]); }
  #[Route('/spaces/{id}/delete',name:'space_delete',methods:['POST'])]

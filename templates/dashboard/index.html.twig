@@ -3,11 +3,11 @@
 <html lang="fr" data-theme="dark" data-dashboard-background="{{ background.mode|default('default') }}" style="--dashboard-background-color: {{ background.color|default('#0b1220') }};{% if background.image|default(null) %} --dashboard-background-image: url('{{ path('neox_board_background_image', {filename: background.image}) }}');{% endif %}">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  {% if app.request.headers.get('Turbo-Frame') and app.request.cookies.get('neox_board_asset') != '202611121900' %}<meta name="turbo-visit-control" content="reload">{% endif %}
+  {% if app.request.headers.get('Turbo-Frame') and app.request.cookies.get('neox_board_asset') != '202611121956' %}<meta name="turbo-visit-control" content="reload">{% endif %}
   <title>{{ title|default('Neox Dashboard') }}</title>
   <link rel="stylesheet" href="{{ asset('bundles/neoxboard/neox-board.css') }}">
   <link rel="stylesheet" href="{{ asset('bundles/neoxboard/dashboard.css') }}?v=202611121945" data-turbo-track="reload">
-  <script defer src="{{ asset('bundles/neoxboard/neox-board.js') }}?v=202611121900" data-turbo-track="reload"></script>
+  <script defer src="{{ asset('bundles/neoxboard/neox-board.js') }}?v=202611121956" data-turbo-track="reload"></script>
 </head>
 <body data-controller="theme sidebar browser-link header">
 <aside class="sidebar" id="dashboard-sidebar" data-controller="navigation" data-navigation-panel-value="{{ panel|default('overview') }}">
