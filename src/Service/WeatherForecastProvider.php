@@ -41,7 +41,7 @@ final class WeatherForecastProvider
         $cachePath = $this->kernel->getProjectDir().'/var/neox-board/weather-'.$cacheKey.'.json';
         if (is_file($cachePath) && (filemtime($cachePath) ?: 0) > time() - 1800) {
             $cached = json_decode((string) @file_get_contents($cachePath), true);
-            if (is_array($cached) && isset($cached['days']) && count($cached['days']) === 5) {
+            if (is_array($cached) && isset($cached['days']) && count($cached['days']) === 3) {
                 return $cached;
             }
         }
@@ -52,7 +52,7 @@ final class WeatherForecastProvider
                     'longitude' => $longitude,
                     'current' => 'temperature_2m,weather_code',
                     'daily' => 'weather_code,temperature_2m_max,temperature_2m_min',
-                    'forecast_days' => 5,
+                    'forecast_days' => 3,
                     'timezone' => $timezone,
                     'temperature_unit' => 'celsius',
                 ];
@@ -75,13 +75,13 @@ final class WeatherForecastProvider
             $maxima = $daily['temperature_2m_max'] ?? [];
             $minima = $daily['temperature_2m_min'] ?? [];
             $codes = $daily['weather_code'] ?? [];
-            if (count($dates) < 5 || count($maxima) < 5 || count($minima) < 5 || count($codes) < 5) {
+            if (count($dates) < 3 || count($maxima) < 3 || count($minima) < 3 || count($codes) < 3) {
                 return [];
             }
 
             $days = [];
             $weekdays = [1 => 'lun.', 2 => 'mar.', 3 => 'mer.', 4 => 'jeu.', 5 => 'ven.', 6 => 'sam.', 7 => 'dim.'];
-            foreach (array_slice($dates, 0, 5) as $index => $date) {
+            foreach (array_slice($dates, 0, 3) as $index => $date) {
                 $code = (int) $codes[$index];
                 [$condition, $icon] = $this->describeCode($code);
                 $days[] = [
