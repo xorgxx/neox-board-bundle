@@ -1,4 +1,5 @@
 import { Controller } from '@hotwired/stimulus';
+import { clearDropTargetFocus } from '../drop_target_focus';
 
 export default class extends Controller {
   static values = { url: String, token: String, space: String, checkUrl: String, createUrl: String, createToken: String, tokenUrl: String };
@@ -55,14 +56,15 @@ export default class extends Controller {
       if (this.isExternalUrlDrag(event.dataTransfer)) {
         event.preventDefault();
         if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+        clearDropTargetFocus(document);
         this.element.classList.add('external-drop-target');
       }
       return;
     }
     event.preventDefault();
+    clearDropTargetFocus(document);
     if (target === this.dragged) return;
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    this.clearDropMarkers();
     const rect = target.getBoundingClientRect();
     const after = this.dragged.classList.contains('link-row') && target.classList.contains('section-divider')
       ? true
@@ -74,12 +76,14 @@ export default class extends Controller {
     if (!this.dragged && this.isExternalUrlDrag(event.dataTransfer)) {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+      clearDropTargetFocus(document);
       this.element.classList.add('external-drop-target');
       this.externalDropSectionId = this.sectionAt(event.target);
       return;
     }
-    if (event.target.closest('[data-menu-item]') || !this.dragged) return;
+    if (event.target.closest('[data-menu-item],.section-tab-item') || !this.dragged) return;
     event.preventDefault();
+    clearDropTargetFocus(document);
     if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
     this.element.classList.add('drop-container-target');
   }
@@ -178,6 +182,7 @@ export default class extends Controller {
   }
 
   clearDragState() {
+    clearDropTargetFocus(document);
     this.element.querySelectorAll('.is-dragging,.drop-before,.drop-after').forEach((item) => {
       item.classList.remove('is-dragging', 'drop-before', 'drop-after');
     });
@@ -456,12 +461,6 @@ export default class extends Controller {
     this.persist(this.spaceValue, item);
   }
 
-  clearDropMarkers() {
-    this.element.querySelectorAll('.drop-before,.drop-after').forEach((item) => {
-      item.classList.remove('drop-before', 'drop-after');
-    });
-  }
-
   async persist(sourceSpaceId, focusItem = null) {
     this.focusMovedItem(focusItem);
     const items = [...this.element.querySelectorAll('[data-menu-item]')].map((item) => item.dataset.menuItem);
@@ -476,6 +475,7 @@ export default class extends Controller {
       body.set('sourceSpaceId', sourceSpaceId);
       sourceItems.forEach((item) => body.append('sourceItems[]', item));
     }
+    document.dispatchEvent(new Event('neox-board:mutation-start'));
     try {
       const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
       const response = await requestFetch(this.urlValue, {
@@ -497,6 +497,8 @@ export default class extends Controller {
       console.error(error);
       this.rememberFocusForReload(focusItem);
       window.location.reload();
+    } finally {
+      document.dispatchEvent(new Event('neox-board:mutation-end'));
     }
   }
 

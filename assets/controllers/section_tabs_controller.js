@@ -1,4 +1,5 @@
 import { Controller } from '@hotwired/stimulus';
+import { clearDropTargetFocus } from '../drop_target_focus';
 
 export default class extends Controller {
   connect() {
@@ -29,13 +30,16 @@ export default class extends Controller {
       this.draggedLink = event.detail.element?.classList.contains('link-row') ? event.detail.element : null;
       this.draggedLinkSourceSpaceId = this.draggedLink ? event.detail.sourceSpaceId : null;
       const divider = event.detail.element?.classList.contains('section-divider') ? event.detail.element : null;
-      this.draggedSectionGroup = divider ? this.groups.find((group) => group.divider === divider) || null : null;
       this.draggedSectionSourceController = divider
         ? window.NeoxBoard?.app?.getControllerForElementAndIdentifier(divider.closest('.space-card-content'), 'section-tabs') || null
+        : null;
+      this.draggedSectionGroup = divider
+        ? this.draggedSectionSourceController?.groups.find((group) => group.divider === divider) || null
         : null;
       this.draggedSectionSourceSpaceId = divider ? event.detail.sourceSpaceId : null;
     };
     this.onGlobalDragEnd = () => {
+      clearDropTargetFocus(document);
       this.draggedLink = null;
       this.draggedLinkSourceSpaceId = null;
       this.draggedSectionGroup = null;
@@ -190,13 +194,20 @@ export default class extends Controller {
   }
 
   overSectionTab(event, targetGroup) {
-    if (this.draggedSectionGroup && this.draggedSectionSourceController !== this) {
+    const movingSectionFromAnotherCard = this.draggedSectionGroup && this.draggedSectionSourceController !== this;
+    const draggedLink = this.findDraggedLink(event);
+    if (!movingSectionFromAnotherCard && !draggedLink && !this.draggedGroup) return;
+    clearDropTargetFocus(document);
+
+    if (movingSectionFromAnotherCard) {
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
-      event.currentTarget.closest('.section-tab-item').classList.add('section-tab-drop-link');
+      const targetRect = targetGroup.tab.getBoundingClientRect();
+      const side = event.clientX < targetRect.left + targetRect.width / 2 ? 'before' : 'after';
+      event.currentTarget.closest('.section-tab-item').classList.add(`section-tab-drop-${side}`);
       return;
     }
-    if (this.findDraggedLink(event)) {
+    if (draggedLink) {
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
       event.currentTarget.closest('.section-tab-item').classList.add('section-tab-drop-link');
@@ -205,7 +216,6 @@ export default class extends Controller {
     if (!this.draggedGroup || targetGroup === this.draggedGroup) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    this.tabs?.querySelectorAll('.section-tab-drop-before,.section-tab-drop-after').forEach((tab) => tab.classList.remove('section-tab-drop-before', 'section-tab-drop-after'));
     const targetRect = targetGroup.tab.getBoundingClientRect();
     const side = event.clientX < targetRect.left + targetRect.width / 2 ? 'before' : 'after';
     event.currentTarget.closest('.section-tab-item').classList.add(`section-tab-drop-${side}`);

@@ -13,6 +13,7 @@ import SpaceCollapseController from './controllers/space_collapse_controller';
 import WidgetLayoutController from './controllers/widget_layout_controller';
 import LinkCheckController from './controllers/link_check_controller';
 import SectionTabsController from './controllers/section_tabs_controller';
+import { installTurboRefreshGuard } from './turbo_refresh_guard';
 import 'preline';
 
 const app = Application.start();
@@ -67,13 +68,7 @@ function restoreMovementFocus() {
 }
 
 document.addEventListener('turbo:load', restoreMovementFocus);
-document.addEventListener('turbo:before-render', () => {
-  const modal = document.querySelector('.board-modal');
-  if (modal?.open) modal.close();
-  document.querySelectorAll('[data-controller~="section-tabs"]').forEach((element) => {
-    app.getControllerForElementAndIdentifier(element, 'section-tabs')?.prepareForMorph();
-  });
-});
+installTurboRefreshGuard(document, app);
 document.addEventListener('turbo:morph', () => {
   requestAnimationFrame(() => {
     document.querySelectorAll('[data-controller~="section-tabs"]').forEach((element) => {
@@ -82,4 +77,4 @@ document.addEventListener('turbo:morph', () => {
   });
 });
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
-document.cookie = 'neox_board_asset=202611122247; Path=/; Max-Age=2592000; SameSite=Lax';
+document.cookie = 'neox_board_asset=202611122314; Path=/; Max-Age=2592000; SameSite=Lax';

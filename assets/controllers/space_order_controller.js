@@ -1,4 +1,5 @@
 import { Controller } from '@hotwired/stimulus';
+import { clearDropTargetFocus } from '../drop_target_focus';
 
 export default class extends Controller {
   static values = { url: String, token: String };
@@ -25,7 +26,7 @@ export default class extends Controller {
     if (!target || target === this.draggedCard) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    this.clearTargetMarkers();
+    clearDropTargetFocus(document);
     const to = target.getBoundingClientRect();
     const after = event.clientY > to.top + to.height / 2;
     target.classList.add(after ? 'space-drop-after' : 'space-drop-before');
@@ -49,6 +50,7 @@ export default class extends Controller {
     if (!this.draggedCard || column.querySelector(':scope > .space-card')) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
+    clearDropTargetFocus(document);
     column.classList.add('is-space-column-drop-target');
   }
 
@@ -109,15 +111,9 @@ export default class extends Controller {
   }
 
   clearMarkers() {
-    this.clearTargetMarkers();
+    clearDropTargetFocus(document);
     this.element.querySelectorAll('.space-drop-allowed').forEach((card) => card.classList.remove('space-drop-allowed'));
     this.element.querySelectorAll('.is-space-column-drop-allowed,.is-space-column-drop-target').forEach((column) => column.classList.remove('is-space-column-drop-allowed', 'is-space-column-drop-target'));
-  }
-
-  clearTargetMarkers() {
-    this.element.querySelectorAll('.space-drop-before,.space-drop-after').forEach((card) => {
-      card.classList.remove('space-drop-before', 'space-drop-after');
-    });
   }
 
   async saveOrder(card = this.draggedCard) {

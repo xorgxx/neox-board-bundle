@@ -1,4 +1,5 @@
 import { Controller } from '@hotwired/stimulus';
+import { clearDropTargetFocus } from '../drop_target_focus';
 
 export default class extends Controller {
   static values = { url: String, token: String };
@@ -17,7 +18,7 @@ export default class extends Controller {
     if (!Array.from(event.dataTransfer?.types || []).includes('application/x-neox-widget')) return;
     event.preventDefault();
     event.dataTransfer.dropEffect = 'move';
-    this.element.querySelectorAll('.space-column').forEach((column) => column.classList.remove('is-widget-drop-target'));
+    clearDropTargetFocus(document);
     event.currentTarget.classList.add('is-widget-drop-target');
   }
 
@@ -35,6 +36,7 @@ export default class extends Controller {
   }
 
   clear() {
+    clearDropTargetFocus(document);
     this.element.classList.remove('is-widget-dragging');
     this.element.querySelectorAll('.is-widget-dragging').forEach((card) => card.classList.remove('is-widget-dragging'));
     this.element.querySelectorAll('.widget-drop-allowed,.is-widget-drop-target').forEach((column) => column.classList.remove('widget-drop-allowed', 'is-widget-drop-target'));
