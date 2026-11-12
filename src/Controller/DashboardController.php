@@ -364,6 +364,7 @@ final class DashboardController extends AbstractController
  {
   $space = $this->ownedSpace($id);
   if (!$this->validToken('link_new_'.$id, $r)) throw $this->createAccessDeniedException();
+  if (!$this->validDroppedSection($space, (string) $r->request->get('section_id', ''))) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => 'Cette section est introuvable.'], 422);
   $link = new Link(trim((string) $r->request->get('title', '')), trim((string) $r->request->get('url', '')));
   $errors = $this->validator->validate($link);
   if (count($errors) > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => (string) $errors[0]->getMessage()], 422);
@@ -376,11 +377,13 @@ final class DashboardController extends AbstractController
  {
   $space = $this->ownedSpace($id);
   if (!$this->validToken('link_new_'.$id, $r)) throw $this->createAccessDeniedException();
+  $sectionId = (string) $r->request->get('section_id', '');
+  if (!$this->validDroppedSection($space, $sectionId)) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => 'Cette section est introuvable.'], 422);
   $link = new Link(trim((string) $r->request->get('title', '')), trim((string) $r->request->get('url', '')));
   $errors = $this->validator->validate($link);
   if (count($errors) > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => (string) $errors[0]->getMessage()], 422);
   if ($this->linkUrlExists($space, $link->getUrl())) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Ce lien existe déjà dans cette carte.'], 409);
-  $link->setPosition($this->nextMenuPosition($space));
+  $this->positionDroppedLink($space, $link, $sectionId);
   $this->favicons->fetchFor($link);
   $space->addLink($link);
   $this->em->flush();
@@ -650,6 +653,28 @@ final class DashboardController extends AbstractController
   foreach ($space->getLinks() as $link) $positions[] = $link->getPosition();
   foreach ($space->getSections() as $section) $positions[] = $section->getPosition();
   return $positions === [] ? 0 : max($positions) + 1;
+ }
+ private function validDroppedSection(Space $space, string $sectionId): bool
+ {
+  if ($sectionId === '') return true;
+  foreach ($space->getSections() as $section) if ($section->getId() === $sectionId) return true;
+  return false;
+ }
+ private function positionDroppedLink(Space $space, Link $link, string $sectionId): void
+ {
+  if ($sectionId === '') {
+   $link->setPosition($this->nextMenuPosition($space));
+   return;
+  }
+  $section = $space->getSections()->filter(static fn (Section $item): bool => $item->getId() === $sectionId)->first();
+  $nextSectionPosition = null;
+  foreach ($space->getSections() as $item) {
+   if ($item->getPosition() > $section->getPosition()) $nextSectionPosition = min($nextSectionPosition ?? PHP_INT_MAX, $item->getPosition());
+  }
+  $position = $nextSectionPosition ?? $this->nextMenuPosition($space);
+  foreach ($space->getLinks() as $item) if ($item->getPosition() >= $position) $item->setPosition($item->getPosition() + 1);
+  foreach ($space->getSections() as $item) if ($item->getPosition() >= $position) $item->setPosition($item->getPosition() + 1);
+  $link->setPosition($position);
  }
  private function buildLinkUrl(string $url, string $scheme): string { $url=trim($url); if (Link::isSupportedBrowserInternalUrl($url) || preg_match('/^[a-z][a-z0-9+.-]*:/i', $url) === 1) return $url; return (in_array($scheme, ['http','https'], true) ? $scheme : 'https').'://'.$url; }
  private function validToken(string $id,Request $r):bool{return $this->csrf->isTokenValid(new CsrfToken($id,(string)$r->request->get('_token')));}

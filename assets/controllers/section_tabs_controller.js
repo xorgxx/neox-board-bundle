@@ -57,6 +57,7 @@ export default class extends Controller {
   addTab(tabs, list, group) {
     const item = document.createElement('div');
     item.className = 'section-tab-item';
+    item.dataset.sectionId = group.id;
     const button = document.createElement('button');
     const tabId = `section-tab-${this.element.closest('.space-card')?.dataset.spaceOrderId}-${group.id || 'general'}`;
     button.type = 'button';

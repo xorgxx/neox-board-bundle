@@ -67,6 +67,7 @@ export default class extends Controller {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
       this.element.classList.add('external-drop-target');
+      this.externalDropSectionId = this.sectionAt(event.target);
       return;
     }
     if (event.target.closest('[data-menu-item]') || !this.dragged) return;
@@ -103,6 +104,7 @@ export default class extends Controller {
       if (!droppedUrl) return;
       event.preventDefault();
       this.element.classList.remove('external-drop-target');
+      droppedUrl.sectionId = this.sectionAt(event.target);
       this.previewDroppedLink(droppedUrl);
       return;
     }
@@ -126,6 +128,18 @@ export default class extends Controller {
       next = next.nextElementSibling;
     }
     return group;
+  }
+
+  sectionAt(target) {
+    const tab = target.closest('.section-tab-item');
+    if (tab) return tab.dataset.sectionId || '';
+    const row = target.closest('.link-row');
+    if (row) {
+      let previous = row.previousElementSibling;
+      while (previous && !previous.classList.contains('section-divider')) previous = previous.previousElementSibling;
+      if (previous) return previous.dataset.sectionId || '';
+    }
+    return this.element.querySelector('.section-tab[aria-selected="true"]')?.closest('.section-tab-item')?.dataset.sectionId || '';
   }
 
   end() {
@@ -200,6 +214,7 @@ export default class extends Controller {
       ['_token', this.createTokenValue],
       ['title', link.title],
       ['url', link.url],
+      ['section_id', link.sectionId || ''],
     ]);
     try {
       const response = await fetch(this.checkUrlValue, {
@@ -209,7 +224,7 @@ export default class extends Controller {
         body,
       });
       const result = await response.json();
-      this.previewMessageTarget.textContent = result.message || 'Impossible de vérifier ce lien.';
+      this.previewMessageTarget.textContent = result.valid ? '' : (result.message || 'Impossible de vérifier ce lien.');
       this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : (result.valid ? 'valid' : 'invalid');
       this.confirmButtonTarget.disabled = !result.valid;
     } catch (error) {
@@ -231,6 +246,7 @@ export default class extends Controller {
       ['_token', this.createTokenValue],
       ['title', link.title],
       ['url', link.url],
+      ['section_id', link.sectionId || ''],
     ]);
     this.confirmButtonTarget.disabled = true;
     this.previewMessageTarget.textContent = 'Ajout du lien…';

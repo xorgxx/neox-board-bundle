@@ -56,6 +56,7 @@ async function setupBoard(cards) {
   global.HTMLElement = window.HTMLElement;
   global.Node = window.Node;
   global.MutationObserver = window.MutationObserver;
+  global.DOMParser = window.DOMParser;
   global.CSS = window.CSS || { escape: (value) => value.replace(/[^a-zA-Z0-9_-]/g, '\\$&') };
   if (!window.CSS) window.CSS = global.CSS;
   if (!window.CSS.escape) window.CSS.escape = global.CSS.escape;
@@ -186,4 +187,21 @@ test('dropping an unsectioned link into a tab removes it from General and saves 
   assert.equal(sections.generalGroup.links.includes(link), false);
   assert.equal(sections.groups[0].links.includes(link), true);
   assert.deepEqual(request.params.getAll('items[]'), ['section:alpha', 'link:loose']);
+});
+
+test('an external URL dropped on a section tab carries that section into the preview', async (t) => {
+  const board = await setupBoard([cardMarkup('space-a', [
+    { id: 'alpha', title: 'Alpha', links: [] },
+    { id: 'beta', title: 'Beta', links: [] },
+  ])]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+  const sections = sectionController(board.app, 'space-a');
+  const reorder = reorderController(board.app, 'space-a');
+  let preview;
+  reorder.previewDroppedLink = (link) => { preview = link; };
+  const target = sections.groups[1].tab.closest('.section-tab-item');
+  const dataTransfer = { types: ['text/uri-list'], getData: () => 'https://example.com/page', dropEffect: '' };
+  reorder.dropOnContainer({ target, dataTransfer, preventDefault() {} });
+  assert.equal(preview.sectionId, 'beta');
+  assert.equal(preview.url, 'https://example.com/page');
 });
