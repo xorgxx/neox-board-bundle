@@ -5,6 +5,145 @@ export default class extends Controller {
   static values = { url: String, token: String };
   static targets = ['status'];
 
+  touchStart(event) {
+    if (event.pointerType !== 'touch' || this.touchDrag) return;
+    const card = event.currentTarget.closest('.space-card');
+    if (!card) return;
+
+    const handle = event.currentTarget;
+    this.touchDrag = {
+      pointerId: event.pointerId,
+      handle,
+      card,
+      wasDraggable: handle.draggable,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: event.clientX,
+      y: event.clientY,
+      active: false,
+      timer: window.setTimeout(() => this.activateTouchDrag(), 300),
+      frame: null,
+    };
+    handle.draggable = false;
+    try { handle.setPointerCapture(event.pointerId); } catch { /* The pointer may already have ended. */ }
+  }
+
+  touchMove(event) {
+    const drag = this.touchDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    drag.x = event.clientX;
+    drag.y = event.clientY;
+
+    if (!drag.active) {
+      if (Math.hypot(drag.x - drag.startX, drag.y - drag.startY) > 10) {
+        drag.cancelled = true;
+        window.clearTimeout(drag.timer);
+      }
+      return;
+    }
+
+    event.preventDefault();
+    this.updateTouchDropTarget(drag);
+    this.scheduleTouchAutoScroll(drag);
+  }
+
+  touchEnd(event) {
+    const drag = this.touchDrag;
+    if (!drag || event.pointerId !== drag.pointerId) return;
+    window.clearTimeout(drag.timer);
+
+    if (drag.active) {
+      event.preventDefault();
+      this.dropTouchCard(drag);
+    }
+    this.finishTouchDrag();
+  }
+
+  touchCancel(event) {
+    if (this.touchDrag && event.pointerId === this.touchDrag.pointerId) this.finishTouchDrag();
+  }
+
+  touchContextMenu(event) {
+    if (this.touchDrag) event.preventDefault();
+  }
+
+  activateTouchDrag() {
+    const drag = this.touchDrag;
+    if (!drag) return;
+    drag.active = true;
+    document.dispatchEvent(new Event('neox-board:touch-drag-start'));
+    this.draggedCard = drag.card;
+    drag.card.classList.add('is-space-dragging');
+    this.element.querySelectorAll('.space-column > .space-card').forEach((target) => {
+      if (target !== drag.card) target.classList.add('space-drop-allowed');
+    });
+    this.element.querySelectorAll('.space-column').forEach((column) => {
+      if (!column.querySelector(':scope > .space-card')) column.classList.add('is-space-column-drop-allowed');
+    });
+    drag.card.classList.add('is-touch-space-dragging');
+  }
+
+  updateTouchDropTarget(drag) {
+    const hovered = document.elementFromPoint(drag.x, drag.y);
+    const target = hovered?.closest('.space-card');
+    clearDropTargetFocus(document);
+    if (target && target !== drag.card) {
+      const bounds = target.getBoundingClientRect();
+      target.classList.add(drag.y > bounds.top + bounds.height / 2 ? 'space-drop-after' : 'space-drop-before');
+      return;
+    }
+
+    const column = hovered?.closest('.space-column');
+    if (column && !column.querySelector(':scope > .space-card')) column.classList.add('is-space-column-drop-target');
+  }
+
+  dropTouchCard(drag) {
+    const hovered = document.elementFromPoint(drag.x, drag.y);
+    const target = hovered?.closest('.space-card');
+    if (target && target !== drag.card) {
+      const bounds = target.getBoundingClientRect();
+      if (drag.y > bounds.top + bounds.height / 2) target.after(drag.card);
+      else target.before(drag.card);
+      this.saveOrder(drag.card);
+      return;
+    }
+
+    const column = hovered?.closest('.space-column');
+    if (column && !column.querySelector(':scope > .space-card')) {
+      column.append(drag.card);
+      this.saveOrder(drag.card);
+    }
+  }
+
+  scheduleTouchAutoScroll(drag) {
+    if (drag.frame !== null) return;
+    const tick = () => {
+      if (this.touchDrag !== drag || !drag.active) return;
+      const edge = 72;
+      const y = drag.y;
+      const height = window.innerHeight;
+      const amount = y < edge ? -Math.ceil((edge - y) / 5) : y > height - edge ? Math.ceil((y - height + edge) / 5) : 0;
+      if (amount) {
+        window.scrollBy(0, amount);
+        this.updateTouchDropTarget(drag);
+      }
+      drag.frame = window.requestAnimationFrame(tick);
+    };
+    drag.frame = window.requestAnimationFrame(tick);
+  }
+
+  finishTouchDrag() {
+    const drag = this.touchDrag;
+    if (!drag) return;
+    window.clearTimeout(drag.timer);
+    if (drag.frame !== null) window.cancelAnimationFrame(drag.frame);
+    drag.handle.draggable = drag.wasDraggable;
+    drag.card.classList.remove('is-touch-space-dragging');
+    if (drag.active) document.dispatchEvent(new Event('neox-board:touch-drag-end'));
+    this.touchDrag = null;
+    this.finishDrag();
+  }
+
   startSpace(event) {
     const card = event.currentTarget.closest('.space-card');
     if (!card || !event.dataTransfer) return;
@@ -123,6 +262,7 @@ export default class extends Controller {
     this.element.querySelectorAll(':scope > .space-columns > .space-column').forEach((column, index) => {
       column.querySelectorAll(':scope > .space-card').forEach((card) => body.append(`columns[${index}][]`, card.dataset.spaceOrderId));
     });
+    document.dispatchEvent(new Event('neox-board:mutation-start'));
     try {
       const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
       const response = await requestFetch(this.urlValue, {
@@ -142,6 +282,8 @@ export default class extends Controller {
       console.error(error);
       if (card?.dataset.spaceOrderId) window.NeoxBoard?.rememberMovementFocus?.({ spaceId: card.dataset.spaceOrderId, itemKey: null, sectionId: null });
       window.location.reload();
+    } finally {
+      document.dispatchEvent(new Event('neox-board:mutation-end'));
     }
   }
 }

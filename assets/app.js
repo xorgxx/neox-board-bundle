@@ -77,4 +77,4 @@ document.addEventListener('turbo:morph', () => {
   });
 });
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
-document.cookie = 'neox_board_asset=202611122314; Path=/; Max-Age=2592000; SameSite=Lax';
+document.cookie = 'neox_board_asset=202611122341; Path=/; Max-Age=2592000; SameSite=Lax';

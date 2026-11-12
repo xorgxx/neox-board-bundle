@@ -45,6 +45,8 @@ export function installTurboRefreshGuard(document, app) {
   document.addEventListener('dragstart', startDrag, true);
   document.addEventListener('dragend', finishDrag, true);
   document.addEventListener('drop', finishDrag);
+  document.addEventListener('neox-board:touch-drag-start', startDrag);
+  document.addEventListener('neox-board:touch-drag-end', finishDrag);
   document.addEventListener('neox-board:mutation-start', startMutation);
   document.addEventListener('neox-board:mutation-end', finishMutation);
 
@@ -55,6 +57,8 @@ export function installTurboRefreshGuard(document, app) {
       document.removeEventListener('dragstart', startDrag, true);
       document.removeEventListener('dragend', finishDrag, true);
       document.removeEventListener('drop', finishDrag);
+      document.removeEventListener('neox-board:touch-drag-start', startDrag);
+      document.removeEventListener('neox-board:touch-drag-end', finishDrag);
       document.removeEventListener('neox-board:mutation-start', startMutation);
       document.removeEventListener('neox-board:mutation-end', finishMutation);
     },
