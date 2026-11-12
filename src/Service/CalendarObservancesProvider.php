@@ -31,55 +31,38 @@ final class CalendarObservancesProvider
         $date = $date->setTimezone(new \DateTimeZone($timezone ?? $this->timezone));
         $city ??= $this->city;
         $schoolZone ??= $this->schoolZone;
-        $cacheKey = hash('sha256', $date->format('Y-m-d').'|'.$city.'|'.$schoolZone.'|'.$countryCode);
+        $cacheKey = hash('sha256', 'calendar-v2|'.$date->format('Y-m-d').'|'.$city.'|'.$schoolZone.'|'.$countryCode);
         $cachePath = $this->kernel->getProjectDir().'/var/neox-board/calendar-'.$cacheKey.'.json';
-        if (is_file($cachePath) && (filemtime($cachePath) ?: 0) > time() - 21600) {
+        if (is_file($cachePath)) {
             $cached = json_decode((string) @file_get_contents($cachePath), true);
             if (is_array($cached) && array_key_exists('saint', $cached) && isset($cached['events'])) {
-                return $cached;
+                $hasData = $cached['saint'] !== null || $cached['events'] !== [];
+                $cacheLifetime = $hasData ? 21600 : 300;
+                if ((filemtime($cachePath) ?: 0) > time() - $cacheLifetime) {
+                    return $cached;
+                }
             }
         }
 
         $schoolYearStart = (int) $date->format('Y') - ((int) $date->format('n') < 9 ? 1 : 0);
         $schoolYear = $schoolYearStart.'-'.($schoolYearStart + 1);
-        $responses = [];
-        try {
-            $responses['saint'] = $this->client->request('GET', 'https://nominis.cef.fr/json/nominis.php', [
+        $saintResponse = $this->requestJson('https://nominis.cef.fr/json/nominis.php', [
                 'query' => ['jour' => $date->format('j'), 'mois' => $date->format('n'), 'annee' => $date->format('Y')],
-                'timeout' => 2.5,
-                'max_duration' => 3,
-                'max_redirects' => 0,
-            ]);
-            if ($countryCode === 'FR') {
-                $responses['holiday'] = $this->client->request('GET', 'https://calendrier.api.gouv.fr/jours-feries/metropole/'.$date->format('Y').'.json', [
-                    'timeout' => 2.5,
-                    'max_duration' => 3,
-                    'max_redirects' => 0,
-                ]);
-            }
-            if ($city !== '' && $schoolZone !== '') {
-                $responses['school'] = $this->client->request('GET', 'https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records', [
-                    'query' => [
-                        'where' => sprintf('location="%s" AND zones="%s" AND annee_scolaire="%s"', $city, $schoolZone, $schoolYear),
-                        'limit' => 100,
-                    ],
-                    'timeout' => 2.5,
-                    'max_duration' => 3,
-                    'max_redirects' => 0,
-                ]);
-            }
-        } catch (\Throwable) {
-            foreach ($responses as $response) {
-                if ($response instanceof ResponseInterface) {
-                    $response->cancel();
-                }
-            }
-            return $this->store($cachePath, $empty);
-        }
-
-        $saintPayload = $this->readJson($responses['saint']);
-        $holidayPayload = isset($responses['holiday']) ? $this->readJson($responses['holiday']) : [];
-        $schoolPayload = isset($responses['school']) ? $this->readJson($responses['school']) : [];
+        ]);
+        $holidayResponse = $countryCode === 'FR'
+            ? $this->requestJson('https://calendrier.api.gouv.fr/jours-feries/metropole/'.$date->format('Y').'.json')
+            : [];
+        $schoolResponse = $city !== '' && $schoolZone !== ''
+            ? $this->requestJson('https://data.education.gouv.fr/api/explore/v2.1/catalog/datasets/fr-en-calendrier-scolaire/records', [
+                'query' => [
+                    'where' => sprintf('location="%s" AND zones="%s" AND annee_scolaire="%s"', $city, $schoolZone, $schoolYear),
+                    'limit' => 100,
+                ],
+            ])
+            : null;
+        $saintPayload = $saintResponse !== null ? $this->readJson($saintResponse) : [];
+        $holidayPayload = $holidayResponse instanceof ResponseInterface ? $this->readJson($holidayResponse) : [];
+        $schoolPayload = $schoolResponse !== null ? $this->readJson($schoolResponse) : [];
 
         $saint = null;
         $majorSaints = $saintPayload['response']['saints']['majeurs'] ?? [];
@@ -131,6 +114,19 @@ final class CalendarObservancesProvider
         } catch (\Throwable) {
             $response->cancel();
             return [];
+        }
+    }
+
+    private function requestJson(string $url, array $options = []): ?ResponseInterface
+    {
+        try {
+            return $this->client->request('GET', $url, $options + [
+                'timeout' => 2.5,
+                'max_duration' => 3,
+                'max_redirects' => 0,
+            ]);
+        } catch (\Throwable) {
+            return null;
         }
     }
 
