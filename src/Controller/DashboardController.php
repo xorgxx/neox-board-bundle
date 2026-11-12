@@ -459,6 +459,10 @@ final class DashboardController extends AbstractController
   $response->setPublic();
   $response->setMaxAge(604800);
   $response->headers->set('X-Content-Type-Options', 'nosniff');
+  if (str_ends_with(strtolower($filename), '.svg')) {
+   $response->headers->set('Content-Type', 'image/svg+xml');
+   $response->headers->set('Content-Security-Policy', "default-src 'none'; sandbox");
+  }
   return $response;
  }
  #[Route('/favicons/search',name:'favicons_search',methods:['POST'])]
@@ -469,16 +473,32 @@ final class DashboardController extends AbstractController
   }
 
   $board = $this->board();
-  foreach ($board->getSpaces() as $space) {
-   foreach ($space->getLinks() as $link) {
-    $filename = $link->getFaviconFilename();
-    if ($filename === null || $this->favicons->getPath($filename) === null) {
-     $this->favicons->fetchFor($link);
-    }
+  $links = [];
+  foreach ($board->getSpaces() as $space) foreach ($space->getLinks() as $link) $links[] = $link;
+
+  if (str_contains((string) $request->headers->get('Accept'), 'application/json')) {
+   $total = count($links);
+   $offset = min(max(0, $request->request->getInt('offset')), $total);
+   $batch = array_slice($links, $offset, 2);
+   $found = 0;
+   foreach ($batch as $link) {
+    $hadFavicon = $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null;
+    if (!$hadFavicon) $this->favicons->fetchFor($link);
+    if (!$hadFavicon && $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null) $found++;
    }
+   $this->em->flush();
+   $processed = $offset + count($batch);
+   $done = $processed >= $total;
+   if ($done && $total > 0) $this->broadcaster->publishRefresh($board, $this->refreshRequestId($request));
+
+   return new JsonResponse(['total' => $total, 'processed' => $processed, 'found' => $found, 'done' => $done]);
+  }
+
+  foreach ($links as $link) {
+   $filename = $link->getFaviconFilename();
+   if ($filename === null || $this->favicons->getPath($filename) === null) $this->favicons->fetchFor($link);
   }
   $this->em->flush();
-
   return $this->completeMutation($request);
  }
 
@@ -486,10 +506,29 @@ final class DashboardController extends AbstractController
  public function checkLinksAvailability(Request $request, LinkAvailabilityChecker $checker): JsonResponse
  {
   if (!$this->validToken('links_check_availability', $request)) throw $this->createAccessDeniedException();
+  $board = $this->board();
   $links = [];
-  foreach ($this->board()->getSpaces() as $space) {
+  foreach ($board->getSpaces() as $space) {
    foreach ($space->getLinks() as $link) $links[] = $link;
   }
+
+  if (str_contains((string) $request->headers->get('Accept'), 'application/json')) {
+   $total = count($links);
+   $offset = min(max(0, $request->request->getInt('offset')), $total);
+   $batch = array_slice($links, $offset, 4);
+   $results = $checker->check($batch);
+   $checkedAt = new \DateTimeImmutable();
+   foreach ($results as $index => $result) $batch[$index]->setAvailabilityStatus($result['active'], $checkedAt);
+   $this->em->flush();
+   $processed = $offset + count($batch);
+   $done = $processed >= $total;
+   if ($done && $total > 0) $this->broadcaster->publishRefresh($board, $this->refreshRequestId($request));
+   $active = count(array_filter($results, static fn (array $result): bool => $result['active']));
+   $response = new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results, 'total' => $total, 'processed' => $processed, 'done' => $done]);
+   $response->headers->set('Cache-Control', 'private, no-store');
+   return $response;
+  }
+
   $results = $checker->check($links);
   $checkedAt = new \DateTimeImmutable();
   foreach ($results as $index => $result) $links[$index]->setAvailabilityStatus($result['active'], $checkedAt);
