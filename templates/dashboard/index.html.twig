@@ -3,7 +3,7 @@
 <html lang="fr" data-theme="dark" data-dashboard-background="{{ background.mode|default('default') }}" style="--dashboard-background-color: {{ background.color|default('#0b1220') }};{% if background.image|default(null) %} --dashboard-background-image: url('{{ path('neox_board_background_image', {filename: background.image}) }}');{% endif %}">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  {% if app.request.headers.get('Turbo-Frame') and app.request.cookies.get('neox_board_asset') != '202611122000' %}<meta name="turbo-visit-control" content="reload">{% endif %}
+  {% if app.request.headers.get('Turbo-Frame') and app.request.cookies.get('neox_board_asset') != '202611122243' %}<meta name="turbo-visit-control" content="reload">{% endif %}
   {% if app.request.attributes.get('csp_nonce') %}<meta name="csp-nonce" content="{{ app.request.attributes.get('csp_nonce') }}">{% endif %}
   <title>{{ title|default('Neox Dashboard') }}</title>
   <link rel="icon" type="image/png" href="/favicon.png?v=2">

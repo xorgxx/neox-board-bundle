@@ -3,8 +3,9 @@ import { Controller } from '@hotwired/stimulus';
 export default class extends Controller {
   connect() {
     const list = this.element.querySelector('.link-list');
-    const dividers = [...(list?.querySelectorAll(':scope > .section-divider') || [])];
     if (!list) return;
+
+    this.normalizeTabsBeforeConnect(list);
 
     const entries = [...list.children];
     const groups = [];
@@ -23,6 +24,7 @@ export default class extends Controller {
 
     this.groups = groups;
     this.list = list;
+    this.generalGroup = null;
     this.onGlobalDragStart = (event) => {
       this.draggedLink = event.detail.element?.classList.contains('link-row') ? event.detail.element : null;
       this.draggedLinkSourceSpaceId = this.draggedLink ? event.detail.sourceSpaceId : null;
@@ -75,26 +77,55 @@ export default class extends Controller {
   }
 
   prepareForMorph() {
-    if (!this.tabs?.isConnected || !this.list) return;
-
-    this.selectedSectionId = this.tabs.querySelector('.section-tab[aria-selected="true"]')
-      ?.closest('.section-tab-item')?.dataset.sectionId;
-    this.groups.forEach((group) => {
-      const item = [...this.tabs.querySelectorAll('.section-tab-item')]
-        .find((candidate) => candidate.dataset.sectionId === group.id);
-      const actions = item?.querySelector('.section-divider-actions');
-      if (actions && group.divider) group.divider.append(actions);
-    });
-    this.tabs.remove();
+    if (!this.list) return;
+    const tabStrips = this.tabStrips();
+    const selected = this.tabs?.querySelector('.section-tab[aria-selected="true"]')
+      || tabStrips.flatMap((tabs) => [...tabs.querySelectorAll('.section-tab[aria-selected="true"]')])[0];
+    if (selected) this.selectedSectionId = selected.closest('.section-tab-item')?.dataset.sectionId;
+    this.restoreDividerActions(tabStrips, this.list);
+    tabStrips.forEach((tabs) => tabs.remove());
     this.tabs = null;
     this.list.querySelectorAll(':scope > .section-divider, :scope > .link-row').forEach((item) => { item.hidden = false; });
     this.element.querySelector('.section-tab-empty')?.remove();
   }
 
   rebuildAfterMorph() {
-    if (!this.element.isConnected || this.tabs?.isConnected) return;
+    if (!this.element.isConnected) return;
+    const existingTabs = this.tabStrips();
+    if (existingTabs.length === 1 && existingTabs[0] === this.tabs) return;
     this.disconnect();
     this.connect();
+  }
+
+  tabStrips() {
+    return [...this.element.children].filter((child) => child.classList.contains('section-tabs'));
+  }
+
+  restoreDividerActions(tabStrips, list) {
+    const dividers = new Map([...list.querySelectorAll(':scope > .section-divider')]
+      .map((divider) => [divider.dataset.sectionId, divider]));
+    tabStrips.forEach((tabs) => {
+      tabs.querySelectorAll('.section-tab-item').forEach((item) => {
+        const divider = dividers.get(item.dataset.sectionId);
+        const actions = item.querySelector('.section-divider-actions');
+        if (!divider || !actions) return;
+        if (divider.querySelector('.section-divider-actions')) actions.remove();
+        else divider.append(actions);
+      });
+    });
+  }
+
+  normalizeTabsBeforeConnect(list) {
+    const staleTabs = this.tabStrips();
+    const selected = staleTabs.flatMap((tabs) => [...tabs.querySelectorAll('.section-tab[aria-selected="true"]')])[0];
+    if (selected && this.selectedSectionId == null) {
+      this.selectedSectionId = selected.closest('.section-tab-item')?.dataset.sectionId;
+    }
+    this.restoreDividerActions(staleTabs, list);
+    staleTabs.forEach((tabs) => tabs.remove());
+    list.querySelectorAll(':scope > .section-divider, :scope > .link-row').forEach((item) => { item.hidden = false; });
+    this.element.querySelector('.section-tab-empty')?.remove();
+    this.tabs = null;
   }
 
   addTab(tabs, list, group) {

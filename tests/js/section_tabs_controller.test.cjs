@@ -31,7 +31,7 @@ function cardMarkup(spaceId, sections, ungroupedLinks = []) {
   const items = sections.map((section) => `
     <li class="section-divider" data-section-id="${section.id}" data-menu-item="section:${section.id}">
       <div class="section-divider-label"><span>${section.title}</span></div>
-      <div class="section-divider-actions"></div>
+      <div class="section-divider-actions"><button type="button">edit</button><button type="button">delete</button></div>
     </li>
     ${section.links.map((link) => `<li class="link-row" draggable="true" data-link-id="${link.id}" data-menu-item="link:${link.id}"><span class="resource-title">${link.title}</span></li>`).join('')}
   `).join('');
@@ -119,7 +119,7 @@ function dispatchDrop(target, type, clientX = 1) {
   return event;
 }
 
-test('section tabs survive a Turbo morph and keep the selected section', async (t) => {
+test('section tabs survive repeated Turbo morphs without duplicating tab strips', async (t) => {
   const board = await setupBoard([cardMarkup('space-a', [
     { id: 'alpha', title: 'Alpha', links: [{ id: 'link-a', title: 'A' }] },
     { id: 'beta', title: 'Beta', links: [{ id: 'link-b', title: 'B' }] },
@@ -130,8 +130,13 @@ test('section tabs survive a Turbo morph and keep the selected section', async (
   const beta = sections.groups.find((group) => group.id === 'beta');
   sections.selectTab(beta.tab, sections.list, beta);
 
+  // Simulate repeated controller reconnects during a card move leaving stale
+  // tab strips in the card, as seen in the reported screenshot.
+  sections.tabs.after(sections.tabs.cloneNode(true), sections.tabs.cloneNode(true));
+  assert.equal(sections.element.querySelectorAll(':scope > .section-tabs').length, 3);
+
   sections.prepareForMorph();
-  assert.equal(document.querySelector('.section-tabs'), null, 'generated tabs are removed before morphing');
+  assert.equal(sections.element.querySelectorAll(':scope > .section-tabs').length, 0, 'all generated strips are removed before morphing');
   assert.equal(beta.divider.querySelector('.section-divider-actions') !== null, true, 'section actions return to the server-rendered divider');
   assert.equal(document.querySelector('[data-link-id="link-a"]').hidden, false, 'the pre-morph list is restored');
 
@@ -140,6 +145,13 @@ test('section tabs survive a Turbo morph and keep the selected section', async (
   assert.ok(rebuilt.tabs?.isConnected, 'tabs are rebuilt after morphing');
   assert.equal(rebuilt.tabs.querySelector('[data-section-id="beta"] .section-tab').getAttribute('aria-selected'), 'true');
   assert.equal(document.querySelector('[data-link-id="link-a"]').hidden, true, 'links remain filtered to the selected tab');
+
+  for (let index = 0; index < 3; index += 1) {
+    rebuilt.prepareForMorph();
+    rebuilt.rebuildAfterMorph();
+    assert.equal(rebuilt.element.querySelectorAll(':scope > .section-tabs').length, 1, 'every morph cycle leaves one tab strip');
+    assert.equal(rebuilt.element.querySelectorAll('.section-divider-actions').length, 2, 'section actions are never duplicated or lost');
+  }
 });
 
 async function waitForRequest(requests) {
