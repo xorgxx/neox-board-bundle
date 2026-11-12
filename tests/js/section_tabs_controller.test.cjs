@@ -38,9 +38,20 @@ function cardMarkup(spaceId, sections, ungroupedLinks = []) {
   const ungrouped = ungroupedLinks.map((link) => `<li class="link-row" draggable="true" data-link-id="${link.id}" data-menu-item="link:${link.id}"><span class="resource-title">${link.title}</span></li>`).join('');
   return `
     <article class="space-card" data-space-order-id="${spaceId}" data-controller="reorder"
+      data-action="dragover->reorder#overContainer drop->reorder#dropOnContainer"
       data-reorder-space-value="${spaceId}" data-reorder-url-value="/spaces/${spaceId}/reorder"
-      data-reorder-token-value="token-${spaceId}">
+      data-reorder-token-value="token-${spaceId}"
+      data-reorder-check-url-value="/spaces/${spaceId}/links/check"
+      data-reorder-create-url-value="/spaces/${spaceId}/links/drop"
+      data-reorder-create-token-value="token-${spaceId}">
       <div class="space-card-content" data-controller="section-tabs">
+        <div class="drop-link-preview" data-reorder-target="dropPreview" hidden>
+          <span data-reorder-target="previewSection"></span>
+          <b data-reorder-target="previewTitle"></b>
+          <code data-reorder-target="previewUrl"></code>
+          <p data-reorder-target="previewMessage"></p>
+          <button data-reorder-target="confirmButton" disabled></button>
+        </div>
         <ul class="link-list">${ungrouped}${items}</ul>
       </div>
     </article>`;
@@ -54,9 +65,12 @@ async function setupBoard(cards) {
   global.Event = window.Event;
   global.CustomEvent = window.CustomEvent;
   global.HTMLElement = window.HTMLElement;
+  global.Element = window.Element;
   global.Node = window.Node;
   global.MutationObserver = window.MutationObserver;
   global.DOMParser = window.DOMParser;
+  global.KeyboardEvent = window.KeyboardEvent;
+  global.MouseEvent = window.MouseEvent;
   global.CSS = window.CSS || { escape: (value) => value.replace(/[^a-zA-Z0-9_-]/g, '\\$&') };
   if (!window.CSS) window.CSS = global.CSS;
   if (!window.CSS.escape) window.CSS.escape = global.CSS.escape;
@@ -204,4 +218,54 @@ test('an external URL dropped on a section tab carries that section into the pre
   reorder.dropOnContainer({ target, dataTransfer, preventDefault() {} });
   assert.equal(preview.sectionId, 'beta');
   assert.equal(preview.url, 'https://example.com/page');
+});
+
+test('external URL in General is checked, submitted to General, and refreshes the board', async (t) => {
+  const board = await setupBoard([cardMarkup('space-a', [
+    { id: 'work', title: 'Work', links: [] },
+  ], [{ id: 'general-link', title: 'General link' }])]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+  const requests = [];
+  let renderedStream = '';
+  board.window.NeoxBoard.Turbo = { renderStreamMessage: (stream) => { renderedStream = stream; } };
+  global.fetch = async (url, options) => {
+    requests.push({ url, params: new URLSearchParams(options.body) });
+    if (url.endsWith('/check')) return { ok: true, json: async () => ({ valid: true, duplicate: false }) };
+    return { ok: true, text: async () => '<turbo-stream action="refresh"></turbo-stream>' };
+  };
+  const reorder = reorderController(board.app, 'space-a');
+  const generalTab = sectionController(board.app, 'space-a').generalGroup.tab.closest('.section-tab-item');
+  const event = new board.window.Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'dataTransfer', { value: {
+    types: ['text/uri-list'], getData: () => 'http://192.168.2.17:3000/stacks',
+  } });
+  generalTab.dispatchEvent(event);
+  for (let i = 0; i < 10 && reorder.confirmButtonTarget.disabled; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(event.defaultPrevented, true);
+  assert.equal(reorder.previewSectionTarget.textContent, 'Général');
+  assert.equal(reorder.previewMessageTarget.hidden, true);
+  assert.equal(reorder.confirmButtonTarget.disabled, false);
+  assert.equal(requests[0].params.get('section_id'), '');
+  await reorder.confirmDroppedLink();
+  assert.equal(requests[1].params.get('section_id'), '');
+  assert.equal(requests[1].params.get('url'), 'http://192.168.2.17:3000/stacks');
+  assert.equal(renderedStream, '<turbo-stream action="refresh"></turbo-stream>');
+  assert.equal(reorder.dropPreviewTarget.hidden, true);
+});
+
+test('a late validation response cannot enable a newer invalid preview', async (t) => {
+  const board = await setupBoard([cardMarkup('space-a', [])]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+  const reorder = reorderController(board.app, 'space-a');
+  const pending = [];
+  global.fetch = () => new Promise((resolve) => { pending.push(resolve); });
+  const first = reorder.previewDroppedLink({ title: 'First', url: 'https://first.example', sectionId: '' });
+  const second = reorder.previewDroppedLink({ title: 'Second', url: 'https://second.example', sectionId: '' });
+  pending[1]({ json: async () => ({ valid: false, duplicate: true, message: 'Doublon' }) });
+  await second;
+  pending[0]({ json: async () => ({ valid: true, duplicate: false }) });
+  await first;
+  assert.equal(reorder.previewTitleTarget.textContent, 'Second');
+  assert.equal(reorder.previewMessageTarget.textContent, 'Doublon');
+  assert.equal(reorder.confirmButtonTarget.disabled, true);
 });

@@ -30,3 +30,4 @@ app.register('widget-layout', WidgetLayoutController);
 app.register('link-check', LinkCheckController);
 app.register('section-tabs', SectionTabsController);
 window.NeoxBoard = { Turbo, app };
+document.cookie = 'neox_board_asset=202611120900; Path=/; Max-Age=2592000; SameSite=Lax';

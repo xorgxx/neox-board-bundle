@@ -369,7 +369,8 @@ final class DashboardController extends AbstractController
   $errors = $this->validator->validate($link);
   if (count($errors) > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => (string) $errors[0]->getMessage()], 422);
   if ($this->linkUrlExists($space, $link->getUrl())) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Ce lien existe déjà dans cette carte.'], 409);
-  return new JsonResponse(['valid' => true, 'duplicate' => false, 'message' => '']);
+  // Cached clients use `message || fallback`; a zero-width success value avoids a false error.
+  return new JsonResponse(['valid' => true, 'duplicate' => false, 'message' => "\u{200B}"]);
  }
 
  #[Route('/spaces/{id}/links/drop',name:'link_drop',methods:['POST'])]
@@ -663,7 +664,15 @@ final class DashboardController extends AbstractController
  private function positionDroppedLink(Space $space, Link $link, string $sectionId): void
  {
   if ($sectionId === '') {
-   $link->setPosition($this->nextMenuPosition($space));
+   $firstSectionPosition = null;
+   foreach ($space->getSections() as $item) $firstSectionPosition = min($firstSectionPosition ?? PHP_INT_MAX, $item->getPosition());
+   if ($firstSectionPosition === null) {
+    $link->setPosition($this->nextMenuPosition($space));
+    return;
+   }
+   foreach ($space->getLinks() as $item) if ($item->getPosition() >= $firstSectionPosition) $item->setPosition($item->getPosition() + 1);
+   foreach ($space->getSections() as $item) if ($item->getPosition() >= $firstSectionPosition) $item->setPosition($item->getPosition() + 1);
+   $link->setPosition($firstSectionPosition);
    return;
   }
   $section = $space->getSections()->filter(static fn (Section $item): bool => $item->getId() === $sectionId)->first();

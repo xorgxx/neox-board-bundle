@@ -7,6 +7,8 @@ export default class extends Controller {
   connect() {
     this.dragged = null;
     this.dragSourceSpaceId = null;
+    this.previewCheckId = 0;
+    this.previewAbort = null;
     this.onGlobalDragStart = this.receiveDragStart.bind(this);
     this.onGlobalDragEnd = this.receiveDragEnd.bind(this);
     document.addEventListener('neox-board:drag-start', this.onGlobalDragStart);
@@ -14,6 +16,7 @@ export default class extends Controller {
   }
 
   disconnect() {
+    this.previewAbort?.abort();
     document.removeEventListener('neox-board:drag-start', this.onGlobalDragStart);
     document.removeEventListener('neox-board:drag-end', this.onGlobalDragEnd);
   }
@@ -205,6 +208,10 @@ export default class extends Controller {
   }
 
   async previewDroppedLink(link) {
+    this.previewAbort?.abort();
+    const checkId = ++this.previewCheckId;
+    const abort = new AbortController();
+    this.previewAbort = abort;
     this.pendingDroppedLink = link;
     this.dropPreviewTarget.hidden = false;
     this.previewTitleTarget.textContent = link.title;
@@ -229,13 +236,16 @@ export default class extends Controller {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         credentials: 'same-origin',
         body,
+        signal: abort.signal,
       });
       const result = await response.json();
+      if (checkId !== this.previewCheckId || this.pendingDroppedLink !== link) return;
       this.previewMessageTarget.textContent = result.valid ? '' : (result.message || 'Impossible de vérifier ce lien.');
       this.previewMessageTarget.hidden = Boolean(result.valid);
       this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : (result.valid ? 'valid' : 'invalid');
       this.confirmButtonTarget.disabled = !result.valid;
     } catch (error) {
+      if (checkId !== this.previewCheckId || abort.signal.aborted) return;
       console.error(error);
       this.previewMessageTarget.textContent = 'Impossible de vérifier cette URL. Réessayez.';
       this.previewMessageTarget.hidden = false;
@@ -244,6 +254,9 @@ export default class extends Controller {
   }
 
   cancelPreview() {
+    ++this.previewCheckId;
+    this.previewAbort?.abort();
+    this.previewAbort = null;
     this.dropPreviewTarget.hidden = true;
     this.pendingDroppedLink = null;
   }
@@ -259,6 +272,7 @@ export default class extends Controller {
     ]);
     this.confirmButtonTarget.disabled = true;
     this.previewMessageTarget.textContent = 'Ajout du lien…';
+    this.previewMessageTarget.hidden = false;
     this.previewMessageTarget.dataset.state = 'checking';
     try {
       const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
@@ -274,6 +288,7 @@ export default class extends Controller {
       if (!response.ok) {
         const result = await response.json();
         this.previewMessageTarget.textContent = result.message || 'Le lien n’a pas pu être ajouté.';
+        this.previewMessageTarget.hidden = false;
         this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : 'invalid';
         this.confirmButtonTarget.disabled = true;
         return;
@@ -284,6 +299,7 @@ export default class extends Controller {
     } catch (error) {
       console.error(error);
       this.previewMessageTarget.textContent = 'Impossible d’ajouter cette URL. Réessayez.';
+      this.previewMessageTarget.hidden = false;
       this.previewMessageTarget.dataset.state = 'invalid';
       this.confirmButtonTarget.disabled = false;
     }

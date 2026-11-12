@@ -9,14 +9,14 @@ use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\HttpClient\NoPrivateNetworkHttpClient;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
-/** Retrieves conventional site favicons without allowing requests to private networks. */
+/** Retrieves conventional site favicons, including explicit LAN addresses. */
 final class FaviconFetcher
 {
-    private HttpClientInterface $client;
+    private HttpClientInterface $safeClient;
 
-    public function __construct(private readonly KernelInterface $kernel, HttpClientInterface $client)
+    public function __construct(private readonly KernelInterface $kernel, private readonly HttpClientInterface $client)
     {
-        $this->client = new NoPrivateNetworkHttpClient($client);
+        $this->safeClient = new NoPrivateNetworkHttpClient($client);
     }
 
     public function fetchFor(Link $link): void
@@ -32,9 +32,11 @@ final class FaviconFetcher
 
         $port = isset($parts['port']) ? ':'.$parts['port'] : '';
         $url = strtolower((string) $parts['scheme']).'://'.$parts['host'].$port.'/favicon.ico';
+        // Only a literal LAN IP may bypass the private-network guard. Redirects stay disabled.
+        $requestClient = $this->isLanAddress((string) $parts['host']) ? $this->client : $this->safeClient;
 
         try {
-            $response = $this->client->request('GET', $url, [
+            $response = $requestClient->request('GET', $url, [
                 'max_redirects' => 0,
                 'timeout' => 2.0,
                 'max_duration' => 3.0,
@@ -45,22 +47,8 @@ final class FaviconFetcher
                 return;
             }
 
-            $mime = strtolower(trim(explode(';', $response->getHeaders(false)['content-type'][0] ?? '')[0]));
-            $extension = match ($mime) {
-                'image/x-icon', 'image/vnd.microsoft.icon' => 'ico',
-                'image/png' => 'png',
-                'image/jpeg' => 'jpg',
-                'image/gif' => 'gif',
-                'image/webp' => 'webp',
-                default => null,
-            };
-            if ($extension === null) {
-                $response->cancel();
-                return;
-            }
-
             $body = '';
-            foreach ($this->client->stream($response, 0.25) as $chunk) {
+            foreach ($requestClient->stream($response, 0.25) as $chunk) {
                 if ($chunk->isTimeout()) {
                     continue;
                 }
@@ -70,7 +58,8 @@ final class FaviconFetcher
                     return;
                 }
             }
-            if ($body === '' || !$this->looksLikeImage($body, $extension)) {
+            $extension = $this->detectImageExtension($body);
+            if ($extension === null) {
                 return;
             }
 
@@ -86,6 +75,16 @@ final class FaviconFetcher
             // A favicon is an optional enhancement; inaccessible or unsafe hosts
             // must never prevent a user from saving an otherwise valid link.
         }
+    }
+
+    private function isLanAddress(string $host): bool
+    {
+        $address = @inet_pton(trim($host, '[]'));
+        if ($address === false) return false;
+        if (strlen($address) === 16) return (ord($address[0]) & 0xfe) === 0xfc;
+        $first = ord($address[0]);
+        $second = ord($address[1]);
+        return $first === 10 || ($first === 172 && $second >= 16 && $second <= 31) || ($first === 192 && $second === 168);
     }
 
     public function getPath(string $filename): ?string
@@ -106,5 +105,13 @@ final class FaviconFetcher
             'gif' => str_starts_with($body, 'GIF87a') || str_starts_with($body, 'GIF89a'),
             'webp' => str_starts_with($body, 'RIFF') && substr($body, 8, 4) === 'WEBP',
         };
+    }
+
+    private function detectImageExtension(string $body): ?string
+    {
+        foreach (['ico', 'png', 'jpg', 'gif', 'webp'] as $extension) {
+            if ($this->looksLikeImage($body, $extension)) return $extension;
+        }
+        return null;
     }
 }

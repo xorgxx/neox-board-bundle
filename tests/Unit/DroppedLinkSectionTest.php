@@ -9,6 +9,29 @@ use PHPUnit\Framework\TestCase;
 
 final class DroppedLinkSectionTest extends TestCase
 {
+    public function testLinkDroppedInGeneralStaysBeforeTheFirstSection(): void
+    {
+        $space = new Space('Links');
+        $general = new Link('General', 'https://example.com/general');
+        $general->setPosition(0);
+        $space->addLink($general);
+        $section = new Section($space, 'Work');
+        $section->setPosition(1);
+        $space->addSection($section);
+        $sectionLink = new Link('Work link', 'https://example.com/work');
+        $sectionLink->setPosition(2);
+        $space->addLink($sectionLink);
+
+        $dropped = new Link('Dropped', 'https://example.com/new');
+        $controller = (new \ReflectionClass(DashboardController::class))->newInstanceWithoutConstructor();
+        (new \ReflectionMethod(DashboardController::class, 'positionDroppedLink'))->invoke($controller, $space, $dropped, '');
+        $space->addLink($dropped);
+
+        $items = [...$space->getSections(), ...$space->getLinks()];
+        usort($items, static fn ($a, $b) => $a->getPosition() <=> $b->getPosition());
+        self::assertSame([$general, $dropped, $section, $sectionLink], $items);
+    }
+
     public function testLinkDroppedOnFirstSectionStaysBeforeTheNextSection(): void
     {
         $space = new Space('Links');
