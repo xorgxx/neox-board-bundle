@@ -28,11 +28,16 @@ final class DashboardTemplateTest extends TestCase
         $rightSpace->setColumnIndex(1);
         $board->addSpace($rightSpace);
 
+        $section = new \Neox\BoardBundle\Entity\Section($leftSpace, 'Section test');
+        $link = new \Neox\BoardBundle\Entity\Link('Lien test', 'https://example.test');
+        $link->setSpace($leftSpace);
+
         $html = $twig->render('dashboard/index.html.twig', [
+            'app' => (object) ['request' => new \Symfony\Component\HttpFoundation\Request(attributes: ['csp_nonce' => 'test-board-nonce'])],
             'user_name' => 'Camille',
             'spaces' => [$leftSpace, $rightSpace],
             'display_spaces' => [$leftSpace, $rightSpace],
-            'menu_items' => [$leftSpace->getId() => [], $rightSpace->getId() => []],
+            'menu_items' => [$leftSpace->getId() => [['type' => 'section', 'item' => $section], ['type' => 'link', 'item' => $link]], $rightSpace->getId() => []],
             'search_space_ids' => [],
             'search_link_ids' => [],
             'activities' => [],
@@ -57,5 +62,10 @@ final class DashboardTemplateTest extends TestCase
         self::assertLessThan(strpos($html, 'data-space-order-id="'.$rightSpace->getId().'"'), $rightColumn);
         self::assertLessThan($rightColumn, strpos($html, 'data-space-order-id="'.$leftSpace->getId().'"'));
         self::assertStringContainsString('dashboard.css', $html);
+        self::assertStringContainsString('<meta name="csp-nonce" content="test-board-nonce">', $html);
+        self::assertStringContainsString('data-turbo-confirm="Supprimer cet espace et ses liens ?"', $html);
+        self::assertStringContainsString('data-turbo-confirm="Supprimer cette section ?"', $html);
+        self::assertStringContainsString('data-turbo-confirm="Supprimer ce lien ?"', $html);
+        self::assertDoesNotMatchRegularExpression('/\son[a-z]+\s*=/i', $html);
     }
 }
