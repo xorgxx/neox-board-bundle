@@ -4,7 +4,10 @@ export default class extends Controller {
   static targets = ['toggle', 'mobileToggle'];
 
   connect() {
-    const collapsed = localStorage.getItem('neox-board-sidebar') === 'collapsed';
+    const savedCookie = document.cookie.split('; ').find((cookie) => cookie.startsWith('neox_board_sidebar='));
+    const collapsed = savedCookie
+      ? savedCookie.slice('neox_board_sidebar='.length) === 'collapsed'
+      : localStorage.getItem('neox-board-sidebar') === 'collapsed';
     this.setCollapsed(collapsed);
     this.onKeydown = (event) => {
       if (event.key === 'Escape') this.closeMobile();
@@ -51,5 +54,6 @@ export default class extends Controller {
       if (icon) icon.textContent = collapsed ? '»' : '«';
     });
     localStorage.setItem('neox-board-sidebar', collapsed ? 'collapsed' : 'expanded');
+    document.cookie = `neox_board_sidebar=${collapsed ? 'collapsed' : 'expanded'}; Path=/; Max-Age=31536000; SameSite=Lax`;
   }
 }
