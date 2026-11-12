@@ -2,7 +2,7 @@ import { Controller } from '@hotwired/stimulus';
 
 export default class extends Controller {
   static values = { url: String, token: String, space: String, checkUrl: String, createUrl: String, createToken: String };
-  static targets = ['dropPreview', 'previewTitle', 'previewUrl', 'previewMessage', 'confirmButton'];
+  static targets = ['dropPreview', 'previewTitle', 'previewUrl', 'previewMessage', 'previewSection', 'confirmButton'];
 
   connect() {
     this.dragged = null;
@@ -105,6 +105,8 @@ export default class extends Controller {
       event.preventDefault();
       this.element.classList.remove('external-drop-target');
       droppedUrl.sectionId = this.sectionAt(event.target);
+      const tab = event.target.closest('.section-tab-item')?.querySelector('.section-tab');
+      if (tab) tab.click();
       this.previewDroppedLink(droppedUrl);
       return;
     }
@@ -207,7 +209,12 @@ export default class extends Controller {
     this.dropPreviewTarget.hidden = false;
     this.previewTitleTarget.textContent = link.title;
     this.previewUrlTarget.textContent = link.url;
+    if (this.hasPreviewSectionTarget) {
+      const tab = [...this.element.querySelectorAll('.section-tab-item')].find((item) => item.dataset.sectionId === link.sectionId);
+      this.previewSectionTarget.textContent = tab?.querySelector('.section-tab')?.textContent?.trim() || 'Général';
+    }
     this.previewMessageTarget.textContent = 'Vérification de l’URL…';
+    this.previewMessageTarget.hidden = false;
     this.previewMessageTarget.dataset.state = 'checking';
     this.confirmButtonTarget.disabled = true;
     const body = new URLSearchParams([
@@ -225,11 +232,13 @@ export default class extends Controller {
       });
       const result = await response.json();
       this.previewMessageTarget.textContent = result.valid ? '' : (result.message || 'Impossible de vérifier ce lien.');
+      this.previewMessageTarget.hidden = Boolean(result.valid);
       this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : (result.valid ? 'valid' : 'invalid');
       this.confirmButtonTarget.disabled = !result.valid;
     } catch (error) {
       console.error(error);
       this.previewMessageTarget.textContent = 'Impossible de vérifier cette URL. Réessayez.';
+      this.previewMessageTarget.hidden = false;
       this.previewMessageTarget.dataset.state = 'invalid';
     }
   }

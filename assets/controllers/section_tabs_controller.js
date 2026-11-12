@@ -47,6 +47,8 @@ export default class extends Controller {
       this.addTab(tabs, list, this.generalGroup);
     }
     groups.forEach((group) => this.addTab(tabs, list, group));
+    const preview = this.element.querySelector('.drop-link-preview');
+    if (preview) tabs.after(preview);
   }
 
   disconnect() {

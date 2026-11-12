@@ -369,7 +369,7 @@ final class DashboardController extends AbstractController
   $errors = $this->validator->validate($link);
   if (count($errors) > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => (string) $errors[0]->getMessage()], 422);
   if ($this->linkUrlExists($space, $link->getUrl())) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Ce lien existe déjà dans cette carte.'], 409);
-  return new JsonResponse(['valid' => true, 'duplicate' => false, 'message' => 'Lien disponible.']);
+  return new JsonResponse(['valid' => true, 'duplicate' => false, 'message' => '']);
  }
 
  #[Route('/spaces/{id}/links/drop',name:'link_drop',methods:['POST'])]
