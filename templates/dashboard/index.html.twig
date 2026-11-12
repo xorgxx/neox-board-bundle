@@ -6,6 +6,7 @@
   {% if app.request.headers.get('Turbo-Frame') and app.request.cookies.get('neox_board_asset') != '202611121956' %}<meta name="turbo-visit-control" content="reload">{% endif %}
   {% if app.request.attributes.get('csp_nonce') %}<meta name="csp-nonce" content="{{ app.request.attributes.get('csp_nonce') }}">{% endif %}
   <title>{{ title|default('Neox Dashboard') }}</title>
+  <link rel="icon" type="image/png" href="/favicon.svg">
   <link rel="stylesheet" href="{{ asset('bundles/neoxboard/neox-board.css') }}">
   <link rel="stylesheet" href="{{ asset('bundles/neoxboard/dashboard.css') }}?v=202611121945" data-turbo-track="reload">
   <script defer src="{{ asset('bundles/neoxboard/neox-board.js') }}?v=202611121956" data-turbo-track="reload"></script>
