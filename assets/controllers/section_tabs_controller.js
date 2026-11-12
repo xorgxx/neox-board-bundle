@@ -4,7 +4,7 @@ export default class extends Controller {
   connect() {
     const list = this.element.querySelector('.link-list');
     const dividers = [...(list?.querySelectorAll(':scope > .section-divider') || [])];
-    if (!list || dividers.length === 0) return;
+    if (!list) return;
 
     const entries = [...list.children];
     const groups = [];
@@ -26,10 +26,19 @@ export default class extends Controller {
     this.onGlobalDragStart = (event) => {
       this.draggedLink = event.detail.element?.classList.contains('link-row') ? event.detail.element : null;
       this.draggedLinkSourceSpaceId = this.draggedLink ? event.detail.sourceSpaceId : null;
+      const divider = event.detail.element?.classList.contains('section-divider') ? event.detail.element : null;
+      this.draggedSectionGroup = divider ? this.groups.find((group) => group.divider === divider) || null : null;
+      this.draggedSectionSourceController = divider
+        ? window.NeoxBoard?.app?.getControllerForElementAndIdentifier(divider.closest('.space-card-content'), 'section-tabs') || null
+        : null;
+      this.draggedSectionSourceSpaceId = divider ? event.detail.sourceSpaceId : null;
     };
     this.onGlobalDragEnd = () => {
       this.draggedLink = null;
       this.draggedLinkSourceSpaceId = null;
+      this.draggedSectionGroup = null;
+      this.draggedSectionSourceController = null;
+      this.draggedSectionSourceSpaceId = null;
       this.tabs?.querySelectorAll('.section-tab-drop-link').forEach((tab) => tab.classList.remove('section-tab-drop-link'));
     };
     document.addEventListener('neox-board:drag-start', this.onGlobalDragStart);
@@ -37,6 +46,7 @@ export default class extends Controller {
     this.generalLinks = entries.filter((entry) => entry.classList.contains('link-row') && !groups.some((group) => group.links.includes(entry)));
     const tabs = document.createElement('div');
     tabs.className = 'section-tabs';
+    tabs.hidden = groups.length === 0 && !hasUnsectionedLinks;
     this.tabs = tabs;
     tabs.setAttribute('role', 'tablist');
     tabs.setAttribute('aria-label', 'Sections de cet espace');
@@ -57,6 +67,7 @@ export default class extends Controller {
   }
 
   addTab(tabs, list, group) {
+    tabs.hidden = false;
     const item = document.createElement('div');
     item.className = 'section-tab-item';
     item.dataset.sectionId = group.id;
@@ -117,6 +128,12 @@ export default class extends Controller {
   }
 
   overSectionTab(event, targetGroup) {
+    if (this.draggedSectionGroup && this.draggedSectionSourceController !== this) {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      event.currentTarget.closest('.section-tab-item').classList.add('section-tab-drop-link');
+      return;
+    }
     if (this.findDraggedLink(event)) {
       event.preventDefault();
       event.dataTransfer.dropEffect = 'move';
@@ -133,6 +150,9 @@ export default class extends Controller {
   }
 
   dropSectionOnTab(event, targetGroup, tabs, list) {
+    if (this.draggedSectionGroup && this.draggedSectionSourceController !== this) {
+      return this.dropSectionGroupOnTab(event, targetGroup, tabs, list);
+    }
     const draggedLink = this.findDraggedLink(event);
     if (draggedLink) return this.dropLinkOnTab(event, targetGroup, list, draggedLink);
     if (!this.draggedGroup || targetGroup === this.draggedGroup) return;
@@ -150,8 +170,57 @@ export default class extends Controller {
     this.element.closest('[data-reorder-space-value]')?.classList.remove('drop-container-target');
     const card = this.element.closest('[data-reorder-space-value]');
     const reorder = window.NeoxBoard?.app?.getControllerForElementAndIdentifier(card, 'reorder');
-    reorder?.persist(card.dataset.reorderSpaceValue);
+    reorder?.persist(card.dataset.reorderSpaceValue, this.draggedGroup?.divider);
     this.endSectionDrag();
+  }
+
+  dropSectionGroupOnTab(event, targetGroup, tabs, list) {
+    const group = this.draggedSectionGroup;
+    const sourceTabs = this.draggedSectionSourceController;
+    if (!group || !sourceTabs || sourceTabs === this) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const sourceSpaceId = this.draggedSectionSourceSpaceId;
+    const targetRect = targetGroup.tab.getBoundingClientRect();
+    const insertIndex = this.groups.indexOf(targetGroup) + (event.clientX >= targetRect.left + targetRect.width / 2 ? 1 : 0);
+    this.acceptSectionGroup(group, sourceTabs, insertIndex);
+    sourceTabs.refreshCurrentTab();
+
+    const card = this.element.closest('[data-reorder-space-value]');
+    const reorder = window.NeoxBoard?.app?.getControllerForElementAndIdentifier(card, 'reorder');
+    reorder?.persist(sourceSpaceId, group.divider);
+    document.dispatchEvent(new Event('neox-board:drag-end'));
+  }
+
+  acceptSectionGroup(group, sourceTabs, insertIndex = this.groups.length) {
+    sourceTabs?.detachSectionGroup(group);
+    this.groups.splice(insertIndex, 0, group);
+    const domOrder = new Map([...this.list.querySelectorAll(':scope > .section-divider')].map((divider, index) => [divider, index]));
+    if (domOrder.has(group.divider)) {
+      this.groups.sort((a, b) => (domOrder.get(a.divider) ?? Number.MAX_SAFE_INTEGER) - (domOrder.get(b.divider) ?? Number.MAX_SAFE_INTEGER));
+    }
+    group.tab = null;
+    this.addTab(this.tabs, this.list, group);
+    this.renderMenuOrder(this.list);
+    this.selectTab(group.tab, this.list, group);
+  }
+
+  detachSectionGroup(group) {
+    this.groups = this.groups.filter((item) => item !== group);
+    group.tab?.closest('.section-tab-item')?.remove();
+    group.tab = null;
+    this.tabs.hidden = this.groups.length === 0 && !this.generalGroup;
+    this.renderMenuOrder(this.list);
+    const selected = this.tabs?.querySelector('.section-tab[aria-selected="true"]');
+    if (!selected) {
+      const fallback = this.groups[0] || this.generalGroup;
+      if (fallback?.tab) this.selectTab(fallback.tab, this.list, fallback);
+      else {
+        const empty = this.element.querySelector('.section-tab-empty');
+        if (empty) empty.hidden = true;
+      }
+    }
   }
 
 
@@ -194,7 +263,7 @@ export default class extends Controller {
 
     const card = this.element.closest('[data-reorder-space-value]');
     const reorder = window.NeoxBoard?.app?.getControllerForElementAndIdentifier(card, 'reorder');
-    reorder?.persist(sourceSpaceId);
+    reorder?.persist(sourceSpaceId, link);
     document.dispatchEvent(new Event('neox-board:drag-end'));
     this.tabs?.querySelectorAll('.section-tab-drop-link').forEach((tab) => tab.classList.remove('section-tab-drop-link'));
   }

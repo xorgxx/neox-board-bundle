@@ -23,6 +23,7 @@ use Symfony\Component\Security\Core\User\UserInterface;
 #[Route('/neox-board', name:'neox_board_')]
 final class DashboardController extends AbstractController
 {
+ private const MAX_EXTERNAL_DROP_LINKS = 100;
  public function __construct(private EntityManagerInterface $em, private ValidatorInterface $validator, private CsrfTokenManagerInterface $csrf, private DashboardBroadcaster $broadcaster, private FaviconFetcher $favicons, private WeatherForecastProvider $weather, private CalendarObservancesProvider $observances, private KernelInterface $kernel){}
  private function board(): Board { $u=$this->getUser(); if(!$u instanceof UserInterface || !method_exists($u,'getUserIdentifier')) throw $this->createAccessDeniedException(); $key=$u->getUserIdentifier(); $repo=$this->em->getRepository(Board::class); $board=$repo->findOneBy(['ownerKey'=>$key]); if(!$board){$board=new Board($key);$this->em->persist($board);$this->em->flush();} return $board; }
  #[Route('',name:'index',methods:['GET'])]
@@ -192,7 +193,7 @@ final class DashboardController extends AbstractController
   $requestId = $this->refreshRequestId($request);
   $this->broadcaster->publishRefresh($board, $requestId);
   if ($request->headers->has('Turbo-Frame') || str_contains((string) $request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) {
-   return $this->refreshResponse();
+   return $this->refreshResponse($requestId);
   }
   return $this->redirectToRoute('neox_board_widgets');
  }
@@ -213,7 +214,7 @@ final class DashboardController extends AbstractController
   $requestId = $this->refreshRequestId($request);
   $this->broadcaster->publishRefresh($board, $requestId);
   if ($request->headers->has('Turbo-Frame') || str_contains((string) $request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) {
-   return $this->refreshResponse();
+   return $this->refreshResponse($requestId);
   }
   return $this->redirectToRoute('neox_board_widgets');
  }
@@ -250,7 +251,7 @@ final class DashboardController extends AbstractController
   }
 
   $this->em->flush();
-  return $this->completeMutation($request);
+  return $this->completeOrderMutation($request);
  }
 
  #[Route('/settings/weather-location', name:'settings_weather_location', methods:['POST'])]
@@ -365,12 +366,16 @@ final class DashboardController extends AbstractController
   $space = $this->ownedSpace($id);
   if (!$this->validToken('link_new_'.$id, $r)) throw $this->createAccessDeniedException();
   if (!$this->validDroppedSection($space, (string) $r->request->get('section_id', ''))) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => 'Cette section est introuvable.'], 422);
-  $link = new Link(trim((string) $r->request->get('title', '')), trim((string) $r->request->get('url', '')));
-  $errors = $this->validator->validate($link);
-  if (count($errors) > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => (string) $errors[0]->getMessage()], 422);
-  if ($this->linkUrlExists($space, $link->getUrl())) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Ce lien existe déjà dans cette carte.'], 409);
+  $input = $this->droppedLinkInputs($r);
+  if (count($input) > self::MAX_EXTERNAL_DROP_LINKS) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => 'Un dépôt est limité à 100 liens.'], 413);
+  $inspection = $this->inspectDroppedLinks($space, $input);
+  if ($inspection['invalid'] > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => $inspection['message'], 'items' => $inspection['items']], 422);
+  if ($inspection['ready'] === []) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Tous ces liens existent déjà dans votre tableau.', 'items' => $inspection['items']], 409);
   // Cached clients use `message || fallback`; a zero-width success value avoids a false error.
-  return new JsonResponse(['valid' => true, 'duplicate' => false, 'message' => "\u{200B}"]);
+  $message = count($input) === 1
+   ? "\u{200B}"
+   : sprintf('%d lien%s prêt%s à ajouter%s.', count($inspection['ready']), count($inspection['ready']) > 1 ? 's' : '', count($inspection['ready']) > 1 ? 's' : '', $inspection['duplicates'] > 0 ? sprintf(' · %d doublon%s ignoré%s', $inspection['duplicates'], $inspection['duplicates'] > 1 ? 's' : '', $inspection['duplicates'] > 1 ? 's' : '') : '');
+  return new JsonResponse(['valid' => true, 'duplicate' => false, 'message' => $message, 'readyCount' => count($inspection['ready']), 'duplicateCount' => $inspection['duplicates'], 'items' => $inspection['items']]);
  }
 
  #[Route('/spaces/{id}/links/drop',name:'link_drop',methods:['POST'])]
@@ -380,13 +385,17 @@ final class DashboardController extends AbstractController
   if (!$this->validToken('link_new_'.$id, $r)) throw $this->createAccessDeniedException();
   $sectionId = (string) $r->request->get('section_id', '');
   if (!$this->validDroppedSection($space, $sectionId)) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => 'Cette section est introuvable.'], 422);
-  $link = new Link(trim((string) $r->request->get('title', '')), trim((string) $r->request->get('url', '')));
-  $errors = $this->validator->validate($link);
-  if (count($errors) > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => (string) $errors[0]->getMessage()], 422);
-  if ($this->linkUrlExists($space, $link->getUrl())) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Ce lien existe déjà dans cette carte.'], 409);
-  $this->positionDroppedLink($space, $link, $sectionId);
-  $this->favicons->fetchFor($link);
-  $space->addLink($link);
+  $input = $this->droppedLinkInputs($r);
+  if (count($input) > self::MAX_EXTERNAL_DROP_LINKS) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => 'Un dépôt est limité à 100 liens.'], 413);
+  $inspection = $this->inspectDroppedLinks($space, $input);
+  if ($inspection['invalid'] > 0) return new JsonResponse(['valid' => false, 'duplicate' => false, 'message' => $inspection['message'], 'items' => $inspection['items']], 422);
+  if ($inspection['ready'] === []) return new JsonResponse(['valid' => false, 'duplicate' => true, 'message' => 'Tous ces liens existent déjà dans votre tableau.', 'items' => $inspection['items']], 409);
+  foreach ($inspection['ready'] as $link) {
+   $this->positionDroppedLink($space, $link, $sectionId);
+   // Keep single-link favicon behavior; fetching a batch synchronously would block the drop.
+   if (count($inspection['ready']) === 1) $this->favicons->fetchFor($link);
+   $space->addLink($link);
+  }
   $this->em->flush();
   return $this->completeMutation($r);
  }
@@ -409,8 +418,8 @@ final class DashboardController extends AbstractController
     $errors = $this->validator->validate($link);
     if (count($errors) > 0) {
      $error = (string) $errors[0]->getMessage();
-    } elseif ($this->linkUrlExists($space, $link->getUrl())) {
-     $error = 'Ce lien existe déjà dans cet espace.';
+    } elseif ($this->linkUrlExists($space->getBoard(), $link->getUrl())) {
+     $error = 'Ce lien existe déjà dans votre tableau.';
     } else {
      $link->setPosition($this->nextMenuPosition($space));
      $this->favicons->fetchFor($link);
@@ -557,7 +566,7 @@ final class DashboardController extends AbstractController
   }
 
   $this->em->flush();
-  return $this->completeMutation($r);
+  return $this->completeOrderMutation($r);
  }
 
  private function menuEntityMap(Space $space): array
@@ -618,20 +627,79 @@ final class DashboardController extends AbstractController
  public function editWidget(string $id,Request $r):Response{$widget=$this->ownedWidget($id);$error=null;if($r->isMethod('POST')){if(!$this->validToken('widget_edit_'.$id,$r))throw $this->createAccessDeniedException();$this->fillWidget($widget,$r);$error=$this->widgetError($widget,(string)$r->request->get('configuration','{}'));if($error===null){$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Widget','title'=>'Modifier le widget','widget'=>$widget,'space'=>$widget->getSpace(),'error'=>$error,'token'=>$this->csrf->getToken('widget_edit_'.$id)->getValue()]);}
  #[Route('/widgets/{id}/delete',name:'widget_delete',methods:['POST'])]
  public function deleteWidget(string $id,Request $r):Response{$widget=$this->ownedWidget($id);if(!$this->validToken('widget_delete_'.$id,$r))throw $this->createAccessDeniedException();$this->em->remove($widget);$this->em->flush();return $this->completeMutation($r);}
- private function completeMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','Le dashboard a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return $this->refreshResponse(); return $this->redirectToRoute('neox_board_index'); }
+ private function completeMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','Le dashboard a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return $this->refreshResponse($requestId); return $this->redirectToRoute('neox_board_index'); }
+ private function completeOrderMutation(Request $request):Response { $board=$this->board(); $this->em->persist(new Activity($board,'update','L’ordre du tableau a été mis à jour.')); $this->em->flush(); $requestId=$this->refreshRequestId($request); $this->broadcaster->publishRefresh($board,$requestId); if ($request->headers->has('Turbo-Frame') || str_contains((string)$request->headers->get('Accept'), 'text/vnd.turbo-stream.html')) return new Response('', 204); return $this->redirectToRoute('neox_board_index'); }
  private function refreshRequestId(Request $request): string { $requestId=(string)$request->headers->get('X-Turbo-Request-Id',''); return preg_match('/^[A-Za-z0-9-]{1,100}$/',$requestId)===1 ? $requestId : bin2hex(random_bytes(16)); }
- private function refreshResponse(): Response { return new Response('<turbo-stream action="refresh"></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
+ private function refreshResponse(?string $requestId = null): Response { $request = $requestId !== null ? ' request-id="'.htmlspecialchars($requestId, ENT_QUOTES, 'UTF-8').'"' : ''; return new Response('<turbo-stream action="refresh" method="morph" scroll="preserve"'.$request.'></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
  private function ownedSpace(string $id):Space{$s=$this->em->getRepository(Space::class)->find($id);if(!$s||$s->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}
  private function ownedLink(string $id):Link{$l=$this->em->getRepository(Link::class)->find($id);if(!$l||$l->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $l;}
  private function ownedSection(string $id):Section{$s=$this->em->getRepository(Section::class)->find($id);if(!$s||$s->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $s;}
  private function ownedWidget(string $id):Widget{$w=$this->em->getRepository(Widget::class)->find($id);if(!$w||$w->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();return $w;}
- private function linkUrlExists(Space $space, string $url): bool
+ private function linkUrlExists(Board $board, string $url): bool
  {
   $normalized = $this->normalizeLinkUrl($url);
-  foreach ($space->getLinks() as $existing) {
+  foreach ($board->getSpaces() as $space) foreach ($space->getLinks() as $existing) {
    if ($this->normalizeLinkUrl($existing->getUrl()) === $normalized) return true;
   }
   return false;
+ }
+
+ /** @return list<array{title?: mixed, url?: mixed}> */
+ private function droppedLinkInputs(Request $request): array
+ {
+  $links = $request->request->all('links');
+  if ($links !== []) return array_values($links);
+  return [['title' => $request->request->get('title', ''), 'url' => $request->request->get('url', '')]];
+ }
+
+ /** @param list<array{title?: mixed, url?: mixed}> $input
+  * @return array{ready: list<Link>, items: list<array{title: string, url: string, status: string, message: string}>, invalid: int, duplicates: int, message: string}
+  */
+ private function inspectDroppedLinks(Space $space, array $input): array
+ {
+  $seen = [];
+  foreach ($space->getBoard()->getSpaces() as $boardSpace) foreach ($boardSpace->getLinks() as $existing) {
+   $seen[$this->normalizeLinkUrl($existing->getUrl())] = true;
+  }
+
+  $ready = [];
+  $items = [];
+  $invalid = 0;
+  $duplicates = 0;
+  $firstError = '';
+  foreach ($input as $row) {
+   $title = is_array($row) && is_scalar($row['title'] ?? null) ? trim((string) $row['title']) : '';
+   $url = is_array($row) && is_scalar($row['url'] ?? null) ? trim((string) $row['url']) : '';
+   $link = new Link($title, $url);
+   $errors = $this->validator->validate($link);
+   if (count($errors) > 0) {
+    $status = 'invalid';
+    $message = (string) $errors[0]->getMessage();
+    if ($firstError === '') $firstError = $message;
+    ++$invalid;
+   } else {
+    $normalized = $this->normalizeLinkUrl($url);
+    if (isset($seen[$normalized])) {
+     $status = 'duplicate';
+     $message = 'Ce lien existe déjà dans votre tableau ou dans ce lot.';
+     ++$duplicates;
+    } else {
+     $status = 'ready';
+     $message = '';
+     $ready[] = $link;
+    }
+    $seen[$normalized] = true;
+   }
+   $items[] = ['title' => $title, 'url' => $url, 'status' => $status, 'message' => $message];
+  }
+
+  return [
+   'ready' => $ready,
+   'items' => $items,
+   'invalid' => $invalid,
+   'duplicates' => $duplicates,
+   'message' => $firstError !== '' ? 'Le lot contient une URL invalide : '.$firstError : '',
+  ];
  }
 
  private function normalizeLinkUrl(string $url): string

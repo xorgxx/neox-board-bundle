@@ -2,7 +2,9 @@ import { Controller } from '@hotwired/stimulus';
 
 export default class extends Controller {
   static values = { url: String, token: String, space: String, checkUrl: String, createUrl: String, createToken: String };
-  static targets = ['dropPreview', 'previewTitle', 'previewUrl', 'previewMessage', 'previewSection', 'confirmButton'];
+  static targets = ['dropPreview', 'previewTitle', 'previewUrl', 'previewMessage', 'previewSection', 'previewKind', 'previewItems', 'confirmButton'];
+
+  static maxExternalDropLinks = 100;
 
   connect() {
     this.dragged = null;
@@ -11,14 +13,17 @@ export default class extends Controller {
     this.previewAbort = null;
     this.onGlobalDragStart = this.receiveDragStart.bind(this);
     this.onGlobalDragEnd = this.receiveDragEnd.bind(this);
+    this.onPaste = this.handlePaste.bind(this);
     document.addEventListener('neox-board:drag-start', this.onGlobalDragStart);
     document.addEventListener('neox-board:drag-end', this.onGlobalDragEnd);
+    document.addEventListener('paste', this.onPaste);
   }
 
   disconnect() {
     this.previewAbort?.abort();
     document.removeEventListener('neox-board:drag-start', this.onGlobalDragStart);
     document.removeEventListener('neox-board:drag-end', this.onGlobalDragEnd);
+    document.removeEventListener('paste', this.onPaste);
   }
 
   start(event) {
@@ -96,21 +101,23 @@ export default class extends Controller {
     const targetList = this.element.querySelector('.link-list');
     const reference = after ? target.nextElementSibling : target;
     movingItems.forEach((item) => targetList.insertBefore(item, reference));
+    this.integrateSectionTransfer(this.dragged, sourceSpaceId);
     event.stopPropagation();
-    this.persist(sourceSpaceId);
+    this.persist(sourceSpaceId, this.dragged);
     this.finishDrag();
   }
 
   dropOnContainer(event) {
     if (!this.dragged) {
-      const droppedUrl = this.parseExternalUrl(event.dataTransfer);
-      if (!droppedUrl) return;
+      const dropped = this.parseExternalUrls(event.dataTransfer);
+      if (dropped.links.length === 0) return;
       event.preventDefault();
       this.element.classList.remove('external-drop-target');
-      droppedUrl.sectionId = this.sectionAt(event.target);
+      const sectionId = this.sectionAt(event.target);
+      dropped.links.forEach((link) => { link.sectionId = sectionId; });
       const tab = event.target.closest('.section-tab-item')?.querySelector('.section-tab');
       if (tab) tab.click();
-      this.previewDroppedLink(droppedUrl);
+      this.previewDroppedLink(dropped.links.length === 1 ? dropped.links[0] : dropped.links, dropped.overflowCount);
       return;
     }
     if (event.target.closest('[data-menu-item]')) return;
@@ -120,7 +127,8 @@ export default class extends Controller {
     const movingItems = crossSpace ? this.getTransferGroup(this.dragged) : [this.dragged];
     const targetList = this.element.querySelector('.link-list');
     movingItems.forEach((item) => targetList.appendChild(item));
-    this.persist(sourceSpaceId);
+    this.integrateSectionTransfer(this.dragged, sourceSpaceId);
+    this.persist(sourceSpaceId, this.dragged);
     this.finishDrag();
   }
 
@@ -135,9 +143,23 @@ export default class extends Controller {
     return group;
   }
 
+  integrateSectionTransfer(item, sourceSpaceId) {
+    if (!item?.classList.contains('section-divider') || !sourceSpaceId || sourceSpaceId === this.spaceValue) return;
+    const sourceCard = document.querySelector(`[data-reorder-space-value="${CSS.escape(sourceSpaceId)}"]`);
+    const sourceContent = sourceCard?.querySelector('.space-card-content[data-controller~="section-tabs"]');
+    const targetContent = this.element.querySelector('.space-card-content[data-controller~="section-tabs"]');
+    const app = window.NeoxBoard?.app;
+    const sourceTabs = sourceContent ? app?.getControllerForElementAndIdentifier(sourceContent, 'section-tabs') : null;
+    const targetTabs = targetContent ? app?.getControllerForElementAndIdentifier(targetContent, 'section-tabs') : null;
+    const group = sourceTabs?.groups.find((candidate) => candidate.divider === item);
+    if (group && targetTabs) targetTabs.acceptSectionGroup(group, sourceTabs);
+  }
+
   sectionAt(target) {
     const tab = target.closest('.section-tab-item');
     if (tab) return tab.dataset.sectionId || '';
+    const divider = target.closest('.section-divider');
+    if (divider) return divider.dataset.sectionId || '';
     const row = target.closest('.link-row');
     if (row) {
       let previous = row.previousElementSibling;
@@ -185,51 +207,137 @@ export default class extends Controller {
     return types.some((type) => ['text/uri-list', 'text/x-moz-url', 'text/plain', 'text/html'].includes(type));
   }
 
-  parseExternalUrl(dataTransfer) {
-    if (!this.isExternalUrlDrag(dataTransfer)) return null;
+  parseExternalUrls(dataTransfer) {
+    const empty = { links: [], overflowCount: 0 };
+    if (!this.isExternalUrlDrag(dataTransfer)) return empty;
     const get = (type) => {
       try { return dataTransfer.getData(type).trim(); } catch { return ''; }
     };
-    const moz = get('text/x-moz-url').split(/\r?\n/);
-    const uriList = get('text/uri-list').split(/\r?\n/).find((line) => line && !line.startsWith('#')) || '';
-    const plain = get('text/plain');
+    const uriList = get('text/uri-list').split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#'));
+    const mozLines = get('text/x-moz-url').split(/\r?\n/).map((line) => line.trim());
     const html = get('text/html');
-    const anchor = html ? new DOMParser().parseFromString(html, 'text/html').querySelector('a[href]') : null;
-    const raw = uriList || moz[0] || anchor?.href || (plain.match(/https?:\/\/[^\s<>"']+/i) || [])[0] || '';
-    const candidate = raw.replace(/[.,;!?)}\]]+$/, '');
-    let parsed;
-    try { parsed = new URL(candidate); } catch { return null; }
-    if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) return null;
+    const plain = get('text/plain');
+    const sources = [];
+    if (uriList.length) sources.push(uriList.map((url) => ({ url })));
+    if (mozLines.some((line) => /^https?:\/\//i.test(line))) {
+      const candidates = [];
+      for (let i = 0; i < mozLines.length; i += 1) {
+        if (!/^https?:\/\//i.test(mozLines[i])) continue;
+        const title = mozLines[i + 1] && !/^https?:\/\//i.test(mozLines[i + 1]) ? mozLines[++i] : '';
+        candidates.push({ url: mozLines[i - (title ? 1 : 0)], title });
+      }
+      sources.push(candidates);
+    }
+    if (html) {
+      sources.push([...new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a[href]')]
+        .map((anchor) => ({ url: anchor.getAttribute('href') || '', title: anchor.textContent.trim() })));
+    }
+    const plainLinks = [...plain.matchAll(/https?:\/\/[^\s<>"']+/gi)].map(([url]) => ({ url }));
+    if (plainLinks.length) sources.push(plainLinks);
+    const validCount = (source) => source.reduce((count, item) => {
+      try { return ['http:', 'https:'].includes(new URL(item.url).protocol) ? count + 1 : count; } catch { return count; }
+    }, 0);
+    const candidates = sources.reduce((best, source) => validCount(source) > validCount(best) ? source : best, []);
 
-    let title = moz[1] || anchor?.textContent?.trim() || '';
-    if (!title && plain && plain !== raw) title = plain.replace(raw, '').replace(/[()]/g, '').trim();
-    if (!title || /^https?:\/\//i.test(title)) title = parsed.hostname;
-    return { url: parsed.href, title: title.slice(0, 160) };
+    const links = [];
+    for (const candidate of candidates) {
+      const rawUrl = String(candidate.url || '').replace(/[.,;!?)}\]]+$/, '');
+      let parsed;
+      try { parsed = new URL(rawUrl); } catch { continue; }
+      if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) continue;
+      let title = String(candidate.title || '').trim();
+      if (!title || /^https?:\/\//i.test(title)) title = parsed.hostname;
+      links.push({ url: parsed.href, title: title.slice(0, 160) });
+    }
+    return { links: links.slice(0, this.constructor.maxExternalDropLinks), overflowCount: Math.max(0, links.length - this.constructor.maxExternalDropLinks) };
   }
 
-  async previewDroppedLink(link) {
+  parseExternalUrl(dataTransfer) {
+    return this.parseExternalUrls(dataTransfer).links[0] || null;
+  }
+
+  handlePaste(event) {
+    const target = event.target;
+    if (target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) return;
+
+    const targetCard = target?.closest?.('.space-card');
+    let destination = null;
+    if (targetCard) {
+      if (targetCard !== this.element) return;
+      destination = target;
+    } else if (this.element.matches(':hover')) {
+      destination = this.element.querySelector('.section-tab-item:hover') || this.element;
+    }
+    if (!destination) return;
+
+    const dropped = this.parseExternalUrls(event.clipboardData);
+    if (dropped.links.length === 0) return;
+    event.preventDefault();
+    const sectionId = this.sectionAt(destination);
+    dropped.links.forEach((link) => { link.sectionId = sectionId; });
+    this.previewDroppedLink(dropped.links.length === 1 ? dropped.links[0] : dropped.links, dropped.overflowCount);
+  }
+
+  droppedLinksBody(links) {
+    const body = new URLSearchParams([['_token', this.createTokenValue], ['section_id', links[0]?.sectionId || '']]);
+    if (links.length === 1) {
+      body.set('title', links[0].title);
+      body.set('url', links[0].url);
+      return body;
+    }
+    links.forEach((link, index) => {
+      body.append(`links[${index}][title]`, link.title);
+      body.append(`links[${index}][url]`, link.url);
+    });
+    return body;
+  }
+
+  renderPreviewItems(items) {
+    if (!this.hasPreviewItemsTarget) return;
+    this.previewItemsTarget.replaceChildren();
+    this.previewItemsTarget.hidden = items.length < 2;
+    items.forEach((item) => {
+      const row = document.createElement('li');
+      row.className = `drop-link-preview-item is-${item.status || 'checking'}`;
+      const title = document.createElement('b');
+      title.textContent = item.title || item.url;
+      const url = document.createElement('code');
+      url.textContent = item.url;
+      const status = document.createElement('span');
+      status.textContent = ({ ready: 'Prêt', duplicate: 'Doublon ignoré', invalid: 'Invalide', checking: 'À vérifier' })[item.status] || 'À vérifier';
+      status.title = item.message || '';
+      row.append(title, url, status);
+      this.previewItemsTarget.append(row);
+    });
+  }
+
+  async previewDroppedLink(input, overflowCount = 0) {
+    const links = Array.isArray(input) ? input : [input];
+    if (links.length === 0) return;
     this.previewAbort?.abort();
     const checkId = ++this.previewCheckId;
     const abort = new AbortController();
     this.previewAbort = abort;
-    this.pendingDroppedLink = link;
+    this.pendingDroppedLinks = links;
+    this.pendingDroppedLink = links[0];
+    this.pendingDropOverflowCount = overflowCount;
+    const isBatch = links.length > 1;
+    if (this.hasPreviewKindTarget) this.previewKindTarget.textContent = isBatch ? `LOT DE ${links.length} LIENS` : 'LIEN';
     this.dropPreviewTarget.hidden = false;
-    this.previewTitleTarget.textContent = link.title;
-    this.previewUrlTarget.textContent = link.url;
+    this.previewTitleTarget.textContent = isBatch ? `${links.length} liens détectés` : links[0].title;
+    this.previewUrlTarget.textContent = isBatch ? '' : links[0].url;
+    this.previewUrlTarget.hidden = isBatch;
+    this.previewMessageTarget.classList.toggle('is-batch', isBatch);
+    this.renderPreviewItems(links.map((link) => ({ ...link, status: 'checking' })));
     if (this.hasPreviewSectionTarget) {
-      const tab = [...this.element.querySelectorAll('.section-tab-item')].find((item) => item.dataset.sectionId === link.sectionId);
+      const tab = [...this.element.querySelectorAll('.section-tab-item')].find((item) => item.dataset.sectionId === links[0].sectionId);
       this.previewSectionTarget.textContent = tab?.querySelector('.section-tab')?.textContent?.trim() || 'Général';
     }
-    this.previewMessageTarget.textContent = 'Vérification de l’URL…';
+    this.previewMessageTarget.textContent = isBatch ? `Vérification des ${links.length} URL…` : 'Vérification de l’URL…';
     this.previewMessageTarget.hidden = false;
     this.previewMessageTarget.dataset.state = 'checking';
     this.confirmButtonTarget.disabled = true;
-    const body = new URLSearchParams([
-      ['_token', this.createTokenValue],
-      ['title', link.title],
-      ['url', link.url],
-      ['section_id', link.sectionId || ''],
-    ]);
+    const body = this.droppedLinksBody(links);
     try {
       const response = await fetch(this.checkUrlValue, {
         method: 'POST',
@@ -239,15 +347,19 @@ export default class extends Controller {
         signal: abort.signal,
       });
       const result = await response.json();
-      if (checkId !== this.previewCheckId || this.pendingDroppedLink !== link) return;
-      this.previewMessageTarget.textContent = result.valid ? '' : (result.message || 'Impossible de vérifier ce lien.');
-      this.previewMessageTarget.hidden = Boolean(result.valid);
+      if (checkId !== this.previewCheckId || this.pendingDroppedLinks !== links) return;
+      if (Array.isArray(result.items)) this.renderPreviewItems(result.items);
+      const overflowMessage = overflowCount > 0 ? ` · seuls les ${this.constructor.maxExternalDropLinks} premiers liens seront traités` : '';
+      this.previewMessageTarget.textContent = result.valid
+        ? (isBatch ? `${result.readyCount || links.length} lien${(result.readyCount || links.length) > 1 ? 's' : ''} prêt${(result.readyCount || links.length) > 1 ? 's' : ''} à ajouter${result.duplicateCount ? ` · ${result.duplicateCount} doublon${result.duplicateCount > 1 ? 's' : ''} ignoré${result.duplicateCount > 1 ? 's' : ''}` : ''}${overflowMessage}.` : '')
+        : (result.message || 'Impossible de vérifier ce lien.');
+      this.previewMessageTarget.hidden = Boolean(result.valid) && !isBatch;
       this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : (result.valid ? 'valid' : 'invalid');
       this.confirmButtonTarget.disabled = !result.valid;
     } catch (error) {
       if (checkId !== this.previewCheckId || abort.signal.aborted) return;
       console.error(error);
-      this.previewMessageTarget.textContent = 'Impossible de vérifier cette URL. Réessayez.';
+      this.previewMessageTarget.textContent = this.pendingDroppedLinks?.length > 1 ? 'Impossible de vérifier les URL du lot. Réessayez.' : 'Impossible de vérifier cette URL. Réessayez.';
       this.previewMessageTarget.hidden = false;
       this.previewMessageTarget.dataset.state = 'invalid';
     }
@@ -259,19 +371,15 @@ export default class extends Controller {
     this.previewAbort = null;
     this.dropPreviewTarget.hidden = true;
     this.pendingDroppedLink = null;
+    this.pendingDroppedLinks = null;
   }
 
   async confirmDroppedLink() {
-    if (!this.pendingDroppedLink || this.confirmButtonTarget.disabled) return;
-    const link = this.pendingDroppedLink;
-    const body = new URLSearchParams([
-      ['_token', this.createTokenValue],
-      ['title', link.title],
-      ['url', link.url],
-      ['section_id', link.sectionId || ''],
-    ]);
+    const links = this.pendingDroppedLinks || (this.pendingDroppedLink ? [this.pendingDroppedLink] : []);
+    if (links.length === 0 || this.confirmButtonTarget.disabled) return;
+    const body = this.droppedLinksBody(links);
     this.confirmButtonTarget.disabled = true;
-    this.previewMessageTarget.textContent = 'Ajout du lien…';
+    this.previewMessageTarget.textContent = links.length > 1 ? `Ajout des ${links.length} liens…` : 'Ajout du lien…';
     this.previewMessageTarget.hidden = false;
     this.previewMessageTarget.dataset.state = 'checking';
     try {
@@ -286,7 +394,8 @@ export default class extends Controller {
         body,
       });
       if (!response.ok) {
-        const result = await response.json();
+        const result = await response.json().catch(() => ({}));
+        if (Array.isArray(result.items)) this.renderPreviewItems(result.items);
         this.previewMessageTarget.textContent = result.message || 'Le lien n’a pas pu être ajouté.';
         this.previewMessageTarget.hidden = false;
         this.previewMessageTarget.dataset.state = result.duplicate ? 'duplicate' : 'invalid';
@@ -298,7 +407,7 @@ export default class extends Controller {
       if (stream && window.NeoxBoard?.Turbo) window.NeoxBoard.Turbo.renderStreamMessage(stream);
     } catch (error) {
       console.error(error);
-      this.previewMessageTarget.textContent = 'Impossible d’ajouter cette URL. Réessayez.';
+      this.previewMessageTarget.textContent = links.length > 1 ? 'Impossible d’ajouter ce lot. Réessayez.' : 'Impossible d’ajouter cette URL. Réessayez.';
       this.previewMessageTarget.hidden = false;
       this.previewMessageTarget.dataset.state = 'invalid';
       this.confirmButtonTarget.disabled = false;
@@ -314,7 +423,7 @@ export default class extends Controller {
     if (event.key === 'ArrowUp') sibling.before(item);
     else sibling.after(item);
     item.focus();
-    this.persist(this.spaceValue);
+    this.persist(this.spaceValue, item);
   }
 
   clearDropMarkers() {
@@ -323,12 +432,16 @@ export default class extends Controller {
     });
   }
 
-  async persist(sourceSpaceId) {
+  async persist(sourceSpaceId, focusItem = null) {
+    this.focusMovedItem(focusItem);
     const items = [...this.element.querySelectorAll('[data-menu-item]')].map((item) => item.dataset.menuItem);
     const body = new URLSearchParams([['_token', this.tokenValue], ...items.map((item) => ['items[]', item])]);
     if (sourceSpaceId && sourceSpaceId !== this.spaceValue) {
       const sourceElement = document.querySelector(`[data-reorder-space-value="${CSS.escape(sourceSpaceId)}"]`);
-      if (!sourceElement) return window.location.reload();
+      if (!sourceElement) {
+        this.rememberFocusForReload(focusItem);
+        return window.location.reload();
+      }
       const sourceItems = [...sourceElement.querySelectorAll('[data-menu-item]')].map((item) => item.dataset.menuItem);
       body.set('sourceSpaceId', sourceSpaceId);
       sourceItems.forEach((item) => body.append('sourceItems[]', item));
@@ -346,10 +459,38 @@ export default class extends Controller {
       });
       if (!response.ok) throw new Error('Could not save the new order');
       const stream = await response.text();
-      if (stream && window.NeoxBoard?.Turbo) window.NeoxBoard.Turbo.renderStreamMessage(stream);
+      if (stream && window.NeoxBoard?.Turbo) {
+        this.rememberFocusForReload(focusItem);
+        window.NeoxBoard.Turbo.renderStreamMessage(stream);
+      }
     } catch (error) {
       console.error(error);
+      this.rememberFocusForReload(focusItem);
       window.location.reload();
     }
+  }
+
+  focusMovedItem(item) {
+    if (!item) return;
+    let target = item;
+    if (item.classList.contains('section-divider')) {
+      target = [...this.element.querySelectorAll('.section-tab-item')]
+        .find((tab) => tab.dataset.sectionId === item.dataset.sectionId)?.querySelector('.section-tab') || item;
+    } else if (item.classList.contains('link-row')) {
+      const sectionId = this.sectionAt(item);
+      const tab = [...this.element.querySelectorAll('.section-tab-item')].find((candidate) => candidate.dataset.sectionId === sectionId)?.querySelector('.section-tab');
+      if (tab && tab.getAttribute('aria-selected') !== 'true') tab.click();
+    }
+    target.scrollIntoView?.({ block: 'nearest', behavior: 'auto' });
+    target.focus?.({ preventScroll: true });
+  }
+
+  rememberFocusForReload(item) {
+    if (!item?.dataset.menuItem) return;
+    window.NeoxBoard?.rememberMovementFocus?.({
+      spaceId: this.spaceValue,
+      itemKey: item.dataset.menuItem,
+      sectionId: this.sectionAt(item),
+    });
   }
 }

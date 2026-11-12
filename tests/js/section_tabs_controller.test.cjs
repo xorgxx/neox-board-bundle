@@ -155,6 +155,50 @@ test('dropping a link on another section tab moves it and persists the new secti
   ]);
 });
 
+test('dragging a section tab reorders its group and persists links with that section', async (t) => {
+  const board = await setupBoard([cardMarkup('space-a', [
+    { id: 'alpha', title: 'Alpha', links: [{ id: 'link-a', title: 'A' }] },
+    { id: 'beta', title: 'Beta', links: [{ id: 'link-b', title: 'B' }] },
+    { id: 'gamma', title: 'Gamma', links: [{ id: 'link-c', title: 'C' }] },
+  ])]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+
+  const sections = sectionController(board.app, 'space-a');
+  const alpha = sections.groups[0];
+  const gamma = sections.groups[2];
+  const dataTransfer = {
+    effectAllowed: '',
+    dropEffect: '',
+    payload: '',
+    setData(type, value) { if (type === 'text/plain') this.payload = value; },
+    getData(type) { return type === 'text/plain' ? this.payload : ''; },
+  };
+  const dragStart = new board.window.Event('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(dragStart, 'dataTransfer', { value: dataTransfer });
+  alpha.tab.closest('.section-tab-item').querySelector('.section-tab-grip').dispatchEvent(dragStart);
+  gamma.tab.getBoundingClientRect = () => ({ left: 0, width: 100 });
+
+  const target = gamma.tab.closest('.section-tab-item');
+  const dragOver = new board.window.Event('dragover', { bubbles: true, cancelable: true });
+  Object.defineProperties(dragOver, { dataTransfer: { value: dataTransfer }, clientX: { value: 90 } });
+  target.dispatchEvent(dragOver);
+  assert.equal(dragOver.defaultPrevented, true);
+
+  const drop = new board.window.Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperties(drop, { dataTransfer: { value: dataTransfer }, clientX: { value: 90 } });
+  target.dispatchEvent(drop);
+  const request = await waitForRequest(board.requests);
+
+  assert.deepEqual(sections.groups.map((group) => group.id), ['beta', 'gamma', 'alpha']);
+  assert.deepEqual([...sections.tabs.querySelectorAll('.section-tab-item')].map((item) => item.dataset.sectionId), ['beta', 'gamma', 'alpha']);
+  assert.deepEqual([...sections.list.querySelectorAll('[data-menu-item]')].map((item) => item.dataset.menuItem), [
+    'section:beta', 'link:link-b', 'section:gamma', 'link:link-c', 'section:alpha', 'link:link-a',
+  ]);
+  assert.deepEqual(request.params.getAll('items[]'), [
+    'section:beta', 'link:link-b', 'section:gamma', 'link:link-c', 'section:alpha', 'link:link-a',
+  ]);
+});
+
 test('dropping a link onto a section in another space updates both ordered lists', async (t) => {
   const board = await setupBoard([
     cardMarkup('space-source', [{ id: 'source-section', title: 'Source', links: [{ id: 'move-me', title: 'Move me' }] }]),
@@ -180,6 +224,79 @@ test('dropping a link onto a section in another space updates both ordered lists
   assert.deepEqual(request.params.getAll('items[]'), ['section:target-section', 'link:stay', 'link:move-me']);
   assert.equal(request.params.get('sourceSpaceId'), 'space-source');
   assert.deepEqual(request.params.getAll('sourceItems[]'), ['section:source-section']);
+});
+
+test('dropping a complete section onto another card immediately creates its tab and moves its links', async (t) => {
+  const board = await setupBoard([
+    cardMarkup('space-source', [{ id: 'moving-section', title: 'Moving section', links: [{ id: 'moving-link', title: 'Move with section' }] }]),
+    cardMarkup('space-target', [{ id: 'target-section', title: 'Target section', links: [{ id: 'staying-link', title: 'Stay' }] }]),
+  ]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+
+  const sourceSections = sectionController(board.app, 'space-source');
+  const targetSections = sectionController(board.app, 'space-target');
+  const sourceGroup = sourceSections.groups[0];
+  const targetGroup = targetSections.groups[0];
+  const dataTransfer = {
+    effectAllowed: '',
+    dropEffect: '',
+    payload: '',
+    setData(type, value) { if (type === 'text/plain') this.payload = value; },
+    getData(type) { return type === 'text/plain' ? this.payload : ''; },
+  };
+  const start = new board.window.Event('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(start, 'dataTransfer', { value: dataTransfer });
+  sourceGroup.tab.closest('.section-tab-item').querySelector('.section-tab-grip').dispatchEvent(start);
+  targetGroup.tab.getBoundingClientRect = () => ({ left: 0, width: 100 });
+
+  const targetTab = targetGroup.tab.closest('.section-tab-item');
+  const over = new board.window.Event('dragover', { bubbles: true, cancelable: true });
+  Object.defineProperties(over, { dataTransfer: { value: dataTransfer }, clientX: { value: 90 } });
+  targetTab.dispatchEvent(over);
+  assert.equal(over.defaultPrevented, true, 'another card should accept the dragged section');
+
+  const drop = new board.window.Event('drop', { bubbles: true, cancelable: true });
+  Object.defineProperties(drop, { dataTransfer: { value: dataTransfer }, clientX: { value: 90 } });
+  targetTab.dispatchEvent(drop);
+  const request = await waitForRequest(board.requests);
+
+  assert.deepEqual(sourceSections.groups.map((group) => group.id), []);
+  assert.deepEqual(targetSections.groups.map((group) => group.id), ['target-section', 'moving-section']);
+  assert.equal(document.querySelector('[data-space-order-id="space-source"] [data-section-id="moving-section"]'), null);
+  assert.ok(document.querySelector('[data-space-order-id="space-target"] [data-section-id="moving-section"]'));
+  assert.ok(document.querySelector('[data-space-order-id="space-target"] [data-link-id="moving-link"]'));
+  assert.deepEqual(request.params.getAll('items[]'), ['section:target-section', 'link:staying-link', 'section:moving-section', 'link:moving-link']);
+  assert.equal(request.params.get('sourceSpaceId'), 'space-source');
+  assert.deepEqual(request.params.getAll('sourceItems[]'), []);
+});
+
+test('dropping a complete section on an empty card makes its tab visible without a refresh', async (t) => {
+  const board = await setupBoard([
+    cardMarkup('space-source', [{ id: 'moving-section', title: 'Moving section', links: [{ id: 'moving-link', title: 'Move with section' }] }]),
+    cardMarkup('space-target', []),
+  ]);
+  t.after(() => { board.app.stop(); board.dom.window.close(); });
+
+  const sourceSections = sectionController(board.app, 'space-source');
+  const targetSections = sectionController(board.app, 'space-target');
+  const group = sourceSections.groups[0];
+  const dataTransfer = { effectAllowed: '', setData() {} };
+  const start = new board.window.Event('dragstart', { bubbles: true, cancelable: true });
+  Object.defineProperty(start, 'dataTransfer', { value: dataTransfer });
+  group.tab.closest('.section-tab-item').querySelector('.section-tab-grip').dispatchEvent(start);
+
+  const targetCard = document.querySelector('[data-space-order-id="space-target"]');
+  const over = dispatchDrop(targetCard, 'dragover');
+  assert.equal(over.defaultPrevented, true);
+  dispatchDrop(targetCard, 'drop');
+  const request = await waitForRequest(board.requests);
+
+  assert.equal(sourceSections.groups.length, 0);
+  assert.deepEqual(targetSections.groups.map((item) => item.id), ['moving-section']);
+  assert.equal(targetSections.groups[0].tab.getAttribute('aria-selected'), 'true');
+  assert.ok(document.querySelector('[data-space-order-id="space-target"] .section-tab-item'));
+  assert.ok(document.querySelector('[data-space-order-id="space-target"] [data-link-id="moving-link"]'));
+  assert.deepEqual(request.params.getAll('items[]'), ['section:moving-section', 'link:moving-link']);
 });
 
 test('dropping an unsectioned link into a tab removes it from General and saves it under the section', async (t) => {

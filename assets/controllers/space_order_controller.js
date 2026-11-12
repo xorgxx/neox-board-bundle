@@ -80,12 +80,12 @@ export default class extends Controller {
           if (after) neighbor.after(card);
           else neighbor.before(card);
           event.currentTarget.focus();
-          this.saveOrder();
+          this.saveOrder(card);
           return;
         }
         targetColumn.append(card);
         event.currentTarget.focus();
-        this.saveOrder();
+        this.saveOrder(card);
         return;
       }
     }
@@ -95,7 +95,7 @@ export default class extends Controller {
     if (event.key === 'ArrowUp') neighbor.before(card);
     else neighbor.after(card);
     event.currentTarget.focus();
-    this.saveOrder();
+    this.saveOrder(card);
   }
 
   endSpace() {
@@ -120,7 +120,9 @@ export default class extends Controller {
     });
   }
 
-  async saveOrder() {
+  async saveOrder(card = this.draggedCard) {
+    const focusHandle = card?.querySelector('.space-drag-handle');
+    focusHandle?.focus({ preventScroll: true });
     const body = new URLSearchParams([['_token', this.tokenValue]]);
     this.element.querySelectorAll(':scope > .space-columns > .space-column').forEach((column, index) => {
       column.querySelectorAll(':scope > .space-card').forEach((card) => body.append(`columns[${index}][]`, card.dataset.spaceOrderId));
@@ -135,10 +137,14 @@ export default class extends Controller {
       });
       if (!response.ok) throw new Error('Could not save the space order');
       const stream = await response.text();
-      if (stream && window.NeoxBoard?.Turbo) window.NeoxBoard.Turbo.renderStreamMessage(stream);
+      if (stream && window.NeoxBoard?.Turbo) {
+        if (card?.dataset.spaceOrderId) window.NeoxBoard?.rememberMovementFocus?.({ spaceId: card.dataset.spaceOrderId, itemKey: null, sectionId: null });
+        window.NeoxBoard.Turbo.renderStreamMessage(stream);
+      }
       if (this.hasStatusTarget) this.statusTarget.textContent = 'Ordre des espaces enregistré.';
     } catch (error) {
       console.error(error);
+      if (card?.dataset.spaceOrderId) window.NeoxBoard?.rememberMovementFocus?.({ spaceId: card.dataset.spaceOrderId, itemKey: null, sectionId: null });
       window.location.reload();
     }
   }

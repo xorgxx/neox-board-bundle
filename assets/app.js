@@ -29,5 +29,43 @@ app.register('space-collapse', SpaceCollapseController);
 app.register('widget-layout', WidgetLayoutController);
 app.register('link-check', LinkCheckController);
 app.register('section-tabs', SectionTabsController);
-window.NeoxBoard = { Turbo, app };
-document.cookie = 'neox_board_asset=202611120900; Path=/; Max-Age=2592000; SameSite=Lax';
+
+const movementFocusKey = 'neox-board:movement-focus';
+function rememberMovementFocus(location) {
+  try { sessionStorage.setItem(movementFocusKey, JSON.stringify(location)); } catch { /* Storage may be unavailable in private contexts. */ }
+}
+
+function restoreMovementFocus() {
+  let location;
+  try {
+    const stored = sessionStorage.getItem(movementFocusKey);
+    if (!stored) return;
+    sessionStorage.removeItem(movementFocusKey);
+    location = JSON.parse(stored);
+  } catch { return; }
+
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.space-card[data-space-order-id]')]
+      .find((item) => item.dataset.spaceOrderId === location.spaceId);
+    if (!card) return;
+
+    const sectionTab = location.sectionId === null
+      ? null
+      : [...card.querySelectorAll('.section-tab-item')]
+        .find((item) => item.dataset.sectionId === location.sectionId)?.querySelector('.section-tab');
+    if (sectionTab && sectionTab.getAttribute('aria-selected') !== 'true') sectionTab.click();
+
+    let target = location.itemKey
+      ? [...card.querySelectorAll('[data-menu-item]')].find((item) => item.dataset.menuItem === location.itemKey)
+      : null;
+    if (location.itemKey?.startsWith('section:')) target = sectionTab;
+    target ||= card.querySelector('.space-drag-handle, .space-collapse-toggle');
+    if (!target) return;
+    target.scrollIntoView?.({ block: 'center', behavior: 'auto' });
+    target.focus?.({ preventScroll: true });
+  }));
+}
+
+document.addEventListener('turbo:load', restoreMovementFocus);
+window.NeoxBoard = { Turbo, app, rememberMovementFocus };
+document.cookie = 'neox_board_asset=202611121900; Path=/; Max-Age=2592000; SameSite=Lax';
