@@ -92,17 +92,33 @@ final class DashboardController extends AbstractController
 
   $searchSpaceIds = [];
   $searchLinkIds = [];
+  $searchSectionIds = [];
   $displaySpaces = $panel === 'space' && $selectedSpace !== null ? [$selectedSpace] : $spaces;
   if ($panel === 'search') {
    $displaySpaces = [];
    foreach ($spaces as $space) {
     $spaceMatches = $dateFilter === null && $searchTerm !== '' && (mb_stripos($space->getTitle(), $searchTerm) !== false || mb_stripos($space->getDescription(), $searchTerm) !== false);
     $matchingLinks = [];
+    $orderedItems = [];
     foreach ($space->getLinks() as $link) {
+     $orderedItems[] = ['type' => 'link', 'position' => $link->getPosition(), 'id' => (string) $link->getId(), 'item' => $link];
+    }
+    foreach ($space->getSections() as $section) {
+     $orderedItems[] = ['type' => 'section', 'position' => $section->getPosition(), 'id' => (string) $section->getId(), 'item' => $section];
+    }
+    usort($orderedItems, static fn (array $a, array $b): int => ($a['position'] <=> $b['position']) ?: strcmp($a['id'], $b['id']));
+    $currentSectionId = null;
+    foreach ($orderedItems as $entry) {
+     if ($entry['type'] === 'section') {
+      $currentSectionId = $entry['id'];
+      continue;
+     }
+     $link = $entry['item'];
      $textMatches = $searchTerm === '' || mb_stripos($link->getTitle(), $searchTerm) !== false || mb_stripos($link->getUrl(), $searchTerm) !== false;
      $dateMatches = $dateFilter === null || ($link->getLastOpenedAt() !== null && $link->getLastOpenedAt() >= $dateFilter);
      if ($textMatches && $dateMatches) {
-      $matchingLinks[] = (string) $link->getId();
+      $matchingLinks[] = $entry['id'];
+      if ($currentSectionId !== null) $searchSectionIds[] = $currentSectionId;
      }
     }
     if ($spaceMatches || $matchingLinks !== []) {
@@ -115,6 +131,7 @@ final class DashboardController extends AbstractController
     }
    }
   }
+  $searchSectionIds = array_values(array_unique($searchSectionIds));
 
   $menuItems = [];
   foreach ($spaces as $menuSpace) {
@@ -158,6 +175,7 @@ final class DashboardController extends AbstractController
    'display_spaces' => $displaySpaces,
    'search_space_ids' => $searchSpaceIds,
    'search_link_ids' => $searchLinkIds,
+   'search_section_ids' => $searchSectionIds,
    'menu_items' => $menuItems,
    'selected_space' => $selectedSpace,
    'user_name' => $this->getUser()->getUserIdentifier(),

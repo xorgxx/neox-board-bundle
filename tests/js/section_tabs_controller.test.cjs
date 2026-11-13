@@ -11,7 +11,8 @@ const bundle = buildSync({
       import { Application } from '@hotwired/stimulus';
       import ReorderController from '../../assets/controllers/reorder_controller.js';
       import SectionTabsController from '../../assets/controllers/section_tabs_controller.js';
-      export { Application, ReorderController, SectionTabsController };
+      import { installSectionTabsFrameRefresh } from '../../assets/section_tabs_frame_refresh.js';
+      export { Application, ReorderController, SectionTabsController, installSectionTabsFrameRefresh };
     `,
     resolveDir: __dirname,
     sourcefile: 'section-tabs-test-entry.js',
@@ -25,7 +26,7 @@ const compiled = new Module(path.join(__dirname, '.section-tabs-test-bundle.cjs'
 compiled.filename = path.join(__dirname, '.section-tabs-test-bundle.cjs');
 compiled.paths = module.paths;
 compiled._compile(bundle, compiled.filename);
-const { Application, ReorderController, SectionTabsController } = compiled.exports;
+const { Application, ReorderController, SectionTabsController, installSectionTabsFrameRefresh } = compiled.exports;
 
 function cardMarkup(spaceId, sections, ungroupedLinks = []) {
   const items = sections.map((section) => `
@@ -59,7 +60,7 @@ function cardMarkup(spaceId, sections, ungroupedLinks = []) {
 }
 
 async function setupBoard(cards) {
-  const dom = new JSDOM(`<!doctype html><html><body>${cards.join('')}</body></html>`, { url: 'https://board.example.test/' });
+  const dom = new JSDOM(`<!doctype html><html><body><turbo-frame id="neox_board_main">${cards.join('')}</turbo-frame></body></html>`, { url: 'https://board.example.test/', pretendToBeVisual: true });
   const { window } = dom;
   global.window = window;
   global.document = window.document;
@@ -69,6 +70,7 @@ async function setupBoard(cards) {
   global.Element = window.Element;
   global.Node = window.Node;
   global.MutationObserver = window.MutationObserver;
+  global.requestAnimationFrame = window.requestAnimationFrame.bind(window);
   global.DOMParser = window.DOMParser;
   global.KeyboardEvent = window.KeyboardEvent;
   global.MouseEvent = window.MouseEvent;
@@ -85,9 +87,39 @@ async function setupBoard(cards) {
   app.register('reorder', ReorderController);
   app.register('section-tabs', SectionTabsController);
   window.NeoxBoard = { app };
+  const uninstallFrameRefresh = installSectionTabsFrameRefresh(window.document, app);
   await new Promise((resolve) => setTimeout(resolve, 0));
-  return { dom, window, app, requests };
+  return { dom, window, app, requests, uninstallFrameRefresh };
 }
+
+test('search results rebuild section tabs after a Turbo frame load', async (t) => {
+  const board = await setupBoard([cardMarkup('space-search', [
+    { id: 'dev', title: 'Dev', links: [{ id: 'dev-link', title: 'Neonatis' }] },
+    { id: 'prod', title: 'Prod', links: [{ id: 'prod-link', title: 'Neona project' }] },
+  ])]);
+  t.after(() => { board.uninstallFrameRefresh(); board.app.stop(); board.dom.window.close(); });
+
+  const card = document.querySelector('[data-space-order-id="space-search"]');
+  const list = card.querySelector('.link-list');
+  list.innerHTML = `
+    <li class="section-divider" data-section-id="dev"><div class="section-divider-label"><span>Dev</span></div><div class="section-divider-actions"><button>Edit</button></div></li>
+    <li class="link-row" data-link-id="dev-match">Neonatis</li>
+    <li class="section-divider" data-section-id="prod"><div class="section-divider-label"><span>Prod</span></div><div class="section-divider-actions"><button>Edit</button></div></li>
+    <li class="link-row" data-link-id="prod-match">Neona project</li>`;
+
+  document.querySelector('turbo-frame').dispatchEvent(new board.window.Event('turbo:frame-load', { bubbles: true }));
+  await new Promise((resolve) => setTimeout(resolve, 100));
+
+  const tabs = card.querySelectorAll('.section-tabs [role="tab"]');
+  assert.deepEqual([...tabs].map((tab) => tab.textContent), ['Dev', 'Prod']);
+  assert.equal(card.querySelectorAll('.section-divider:not([hidden])').length, 0, 'section divider rows are hidden in search results');
+  assert.equal(card.querySelector('[data-link-id="dev-match"]').hidden, false, 'the selected section result is visible');
+  assert.equal(card.querySelector('[data-link-id="prod-match"]').hidden, true, 'results from other sections stay hidden');
+
+  tabs[1].click();
+  assert.equal(card.querySelector('[data-link-id="dev-match"]').hidden, true);
+  assert.equal(card.querySelector('[data-link-id="prod-match"]').hidden, false);
+});
 
 function sectionController(app, spaceId) {
   const card = document.querySelector(`[data-space-order-id="${spaceId}"]`);

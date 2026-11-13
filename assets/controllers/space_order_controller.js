@@ -1,5 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { clearDropTargetFocus } from '../drop_target_focus';
+import { enqueueMovementSave, reportMovementSaveError } from '../movement_save_queue';
 
 export default class extends Controller {
   static values = { url: String, token: String };
@@ -262,28 +263,26 @@ export default class extends Controller {
     this.element.querySelectorAll(':scope > .space-columns > .space-column').forEach((column, index) => {
       column.querySelectorAll(':scope > .space-card').forEach((card) => body.append(`columns[${index}][]`, card.dataset.spaceOrderId));
     });
-    document.dispatchEvent(new Event('neox-board:mutation-start'));
     try {
-      const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
-      const response = await requestFetch(this.urlValue, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/vnd.turbo-stream.html' },
-        credentials: 'same-origin',
-        body,
+      await enqueueMovementSave(async () => {
+        const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
+        const response = await requestFetch(this.urlValue, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/vnd.turbo-stream.html' },
+          credentials: 'same-origin',
+          body,
+        });
+        if (!response.ok) throw new Error(`Could not save the space order (${response.status})`);
+        const stream = await response.text();
+        if (stream && window.NeoxBoard?.Turbo) {
+          if (card?.dataset.spaceOrderId) window.NeoxBoard?.rememberMovementFocus?.({ spaceId: card.dataset.spaceOrderId, itemKey: null, sectionId: null });
+          window.NeoxBoard.Turbo.renderStreamMessage(stream);
+        }
       });
-      if (!response.ok) throw new Error('Could not save the space order');
-      const stream = await response.text();
-      if (stream && window.NeoxBoard?.Turbo) {
-        if (card?.dataset.spaceOrderId) window.NeoxBoard?.rememberMovementFocus?.({ spaceId: card.dataset.spaceOrderId, itemKey: null, sectionId: null });
-        window.NeoxBoard.Turbo.renderStreamMessage(stream);
-      }
       if (this.hasStatusTarget) this.statusTarget.textContent = 'Ordre des espaces enregistré.';
     } catch (error) {
-      console.error(error);
-      if (card?.dataset.spaceOrderId) window.NeoxBoard?.rememberMovementFocus?.({ spaceId: card.dataset.spaceOrderId, itemKey: null, sectionId: null });
-      window.location.reload();
-    } finally {
-      document.dispatchEvent(new Event('neox-board:mutation-end'));
+      if (this.hasStatusTarget) this.statusTarget.textContent = 'Le déplacement reste affiché, mais sa sauvegarde a échoué.';
+      reportMovementSaveError('Le déplacement des espaces reste affiché, mais sa sauvegarde a échoué. Vérifie la connexion puis réessaie.', error);
     }
   }
 }

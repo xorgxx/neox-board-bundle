@@ -1,5 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { clearDropTargetFocus } from '../drop_target_focus';
+import { enqueueMovementSave, reportMovementSaveError } from '../movement_save_queue';
 
 export default class extends Controller {
   static values = { url: String, token: String, space: String, checkUrl: String, createUrl: String, createToken: String, tokenUrl: String };
@@ -468,37 +469,34 @@ export default class extends Controller {
     if (sourceSpaceId && sourceSpaceId !== this.spaceValue) {
       const sourceElement = document.querySelector(`[data-reorder-space-value="${CSS.escape(sourceSpaceId)}"]`);
       if (!sourceElement) {
-        this.rememberFocusForReload(focusItem);
-        return window.location.reload();
+        reportMovementSaveError('Le déplacement est affiché, mais son espace d’origine est introuvable.');
+        return;
       }
       const sourceItems = [...sourceElement.querySelectorAll('[data-menu-item]')].map((item) => item.dataset.menuItem);
       body.set('sourceSpaceId', sourceSpaceId);
       sourceItems.forEach((item) => body.append('sourceItems[]', item));
     }
-    document.dispatchEvent(new Event('neox-board:mutation-start'));
     try {
-      const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
-      const response = await requestFetch(this.urlValue, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'text/vnd.turbo-stream.html',
-        },
-        credentials: 'same-origin',
-        body,
+      await enqueueMovementSave(async () => {
+        const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
+        const response = await requestFetch(this.urlValue, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'text/vnd.turbo-stream.html',
+          },
+          credentials: 'same-origin',
+          body,
+        });
+        if (!response.ok) throw new Error(`Could not save the new order (${response.status})`);
+        const stream = await response.text();
+        if (stream && window.NeoxBoard?.Turbo) {
+          this.rememberFocusForReload(focusItem);
+          window.NeoxBoard.Turbo.renderStreamMessage(stream);
+        }
       });
-      if (!response.ok) throw new Error('Could not save the new order');
-      const stream = await response.text();
-      if (stream && window.NeoxBoard?.Turbo) {
-        this.rememberFocusForReload(focusItem);
-        window.NeoxBoard.Turbo.renderStreamMessage(stream);
-      }
     } catch (error) {
-      console.error(error);
-      this.rememberFocusForReload(focusItem);
-      window.location.reload();
-    } finally {
-      document.dispatchEvent(new Event('neox-board:mutation-end'));
+      reportMovementSaveError('Le déplacement reste affiché, mais sa sauvegarde a échoué. Vérifie la connexion puis réessaie.', error);
     }
   }
 

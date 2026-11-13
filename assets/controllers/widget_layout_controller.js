@@ -1,5 +1,6 @@
 import { Controller } from '@hotwired/stimulus';
 import { clearDropTargetFocus } from '../drop_target_focus';
+import { enqueueMovementSave, reportMovementSaveError } from '../movement_save_queue';
 
 export default class extends Controller {
   static values = { url: String, token: String };
@@ -46,19 +47,20 @@ export default class extends Controller {
   async save(layout) {
     const body = new URLSearchParams({ _token: this.tokenValue, ...layout });
     try {
-      const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
-      const response = await requestFetch(this.urlValue, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/vnd.turbo-stream.html' },
-        credentials: 'same-origin',
-        body,
+      await enqueueMovementSave(async () => {
+        const requestFetch = window.NeoxBoard?.Turbo?.fetch || fetch;
+        const response = await requestFetch(this.urlValue, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'text/vnd.turbo-stream.html' },
+          credentials: 'same-origin',
+          body,
+        });
+        if (!response.ok) throw new Error(`Could not save the widget position (${response.status})`);
+        const stream = await response.text();
+        if (stream && window.NeoxBoard?.Turbo) window.NeoxBoard.Turbo.renderStreamMessage(stream);
       });
-      if (!response.ok) throw new Error('Could not save the widget position');
-      const stream = await response.text();
-      if (stream && window.NeoxBoard?.Turbo) window.NeoxBoard.Turbo.renderStreamMessage(stream);
     } catch (error) {
-      console.error(error);
-      window.location.reload();
+      reportMovementSaveError('Le déplacement du widget reste affiché, mais sa sauvegarde a échoué. Vérifie la connexion puis réessaie.', error);
     } finally {
       this.clear();
     }

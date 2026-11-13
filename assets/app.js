@@ -13,6 +13,7 @@ import SpaceCollapseController from './controllers/space_collapse_controller';
 import WidgetLayoutController from './controllers/widget_layout_controller';
 import LinkCheckController from './controllers/link_check_controller';
 import SectionTabsController from './controllers/section_tabs_controller';
+import { installSectionTabsFrameRefresh } from './section_tabs_frame_refresh';
 import { installTurboRefreshGuard } from './turbo_refresh_guard';
 import 'preline';
 
@@ -69,6 +70,21 @@ function restoreMovementFocus() {
 
 document.addEventListener('turbo:load', restoreMovementFocus);
 installTurboRefreshGuard(document, app);
+let movementSaveNoticeTimer;
+document.addEventListener('neox-board:movement-save-error', (event) => {
+  let notice = document.querySelector('.movement-save-notice');
+  if (!notice) {
+    notice = document.createElement('div');
+    notice.className = 'movement-save-notice';
+    notice.setAttribute('role', 'alert');
+    notice.setAttribute('aria-live', 'assertive');
+    document.body.append(notice);
+  }
+  notice.textContent = event.detail?.message || 'La sauvegarde du déplacement a échoué.';
+  notice.hidden = false;
+  window.clearTimeout(movementSaveNoticeTimer);
+  movementSaveNoticeTimer = window.setTimeout(() => { notice.hidden = true; }, 8000);
+});
 document.addEventListener('turbo:morph', () => {
   requestAnimationFrame(() => {
     document.querySelectorAll('[data-controller~="section-tabs"]').forEach((element) => {
@@ -76,5 +92,6 @@ document.addEventListener('turbo:morph', () => {
     });
   });
 });
+installSectionTabsFrameRefresh(document, app);
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
-document.cookie = 'neox_board_asset=202611122341; Path=/; Max-Age=2592000; SameSite=Lax';
+document.cookie = 'neox_board_asset=202611130009; Path=/; Max-Age=2592000; SameSite=Lax';

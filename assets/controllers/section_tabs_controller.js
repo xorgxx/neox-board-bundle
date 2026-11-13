@@ -97,7 +97,17 @@ export default class extends Controller {
     if (!this.element.isConnected) return;
     const existingTabs = this.tabStrips();
     if (existingTabs.length === 1 && existingTabs[0] === this.tabs) return;
+    this.rebuild();
+  }
+
+  rebuildAfterFrame() {
+    if (!this.element.isConnected) return;
+    this.rebuild();
+  }
+
+  rebuild() {
     this.disconnect();
+    this.prepareForMorph();
     this.connect();
   }
 
