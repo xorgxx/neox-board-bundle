@@ -16,6 +16,9 @@ final class FaviconFetcher
 {
     private HttpClientInterface $safeClient;
 
+    /** @var array<string, string|null> */
+    private array $privateAddressCache = [];
+
     public function __construct(private readonly HttpClientInterface $client)
     {
         $this->safeClient = new NoPrivateNetworkHttpClient($client);
@@ -36,11 +39,32 @@ final class FaviconFetcher
         if (!is_array($pageParts)) {
             return;
         }
-        $pageClient = $this->clientFor($pageParts, $pageParts);
-        $page = $this->download($pageClient, $pageUrl, 1_048_576, $this->isLanAddress((string) $pageParts['host']) ? 0 : 3);
+        $pagePrivateIp = $this->privateAddressForHost((string) $pageParts['host']);
+        $pageClient = $this->clientFor($pageParts, $pageParts, $pagePrivateIp);
+        $pageIsLan = $pagePrivateIp !== null;
+        $page = $this->download($pageClient, $pageUrl, 1_048_576, 3, false, $pageIsLan ? (string) $pageParts['host'] : null);
+        $discoveryUrl = $pageUrl;
+        // A deep link may return 404 or require authentication while the site's
+        // root still advertises its favicon. Reuse the pinned internal client for
+        // this same-origin fallback instead of giving up after the first request.
+        if ($page === null && (($pageParts['path'] ?? '/') !== '/')) {
+            $discoveryUrl = $this->originUrl($pageParts, '/');
+            $page = $this->download($pageClient, $discoveryUrl, 1_048_576, 3, false, $pageIsLan ? (string) $pageParts['host'] : null);
+        }
         $candidates = [];
         if ($page !== null) {
-            $candidates = [...$this->candidatesFromLinkHeaders($page['link_headers'], $pageUrl), ...$this->candidatesFromHtml($page['body'], $pageUrl)];
+            $candidates = [...$this->candidatesFromLinkHeaders($page['link_headers'], $discoveryUrl), ...$this->candidatesFromHtml($page['body'], $discoveryUrl)];
+        }
+        // Some internal HTTP aliases expose only a lightweight redirect/landing
+        // response while the real site (and its favicon) is served on HTTPS.
+        if ($candidates === [] && $pageIsLan && strtolower((string) ($pageParts['scheme'] ?? '')) === 'http' && filter_var((string) ($pageParts['host'] ?? ''), FILTER_VALIDATE_IP) === false) {
+            $secureParts = $pageParts;
+            $secureParts['scheme'] = 'https';
+            $secureUrl = $this->buildUrl($secureParts);
+            $securePage = $this->download($pageClient, $secureUrl, 1_048_576, 3, false, (string) $pageParts['host']);
+            if ($securePage !== null) {
+                $candidates = [...$this->candidatesFromLinkHeaders($securePage['link_headers'], $secureUrl), ...$this->candidatesFromHtml($securePage['body'], $secureUrl)];
+            }
         }
         $candidates[] = $this->originUrl($pageParts, '/favicon.ico');
 
@@ -50,9 +74,9 @@ final class FaviconFetcher
                 continue;
             }
 
-            $iconClient = $this->clientFor($pageParts, $parts);
-            $sameOriginLan = $this->isLanAddress((string) $pageParts['host']) && $this->sameOrigin($pageParts, $parts);
-            $icon = $this->download($iconClient, $candidate, 262_144, $sameOriginLan ? 0 : 2, true);
+            $iconClient = $this->clientFor($pageParts, $parts, $pagePrivateIp);
+            $sameOriginLan = $pageIsLan && $this->sameInternalHost($pageParts, $parts);
+            $icon = $this->download($iconClient, $candidate, 262_144, 2, true, $sameOriginLan ? (string) $pageParts['host'] : null);
             if ($icon === null) {
                 continue;
             }
@@ -78,9 +102,18 @@ final class FaviconFetcher
     private function thumbnail(string $body, string $extension): ?string
     {
         if ($extension === 'svg') {
-            $body = preg_replace('/<svg\b(?![^>]*\bwidth=)/i', '<svg width="25"', $body, 1) ?? $body;
-            $body = preg_replace('/<svg\b(?![^>]*\bheight=)/i', '<svg height="25"', $body, 1) ?? $body;
+            $body = preg_replace_callback('/<svg\b[^>]*>/i', static function (array $match): string {
+                $tag = preg_replace('/\bwidth\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)/i', 'width="25"', $match[0], 1, $widthCount) ?? $match[0];
+                if ($widthCount === 0) $tag = preg_replace('/<svg\b/i', '<svg width="25"', $tag, 1) ?? $tag;
+                $tag = preg_replace('/\bheight\s*=\s*(?:"[^"]*"|\'[^\']*\'|[^\s>]+)/i', 'height="25"', $tag, 1, $heightCount) ?? $tag;
+                if ($heightCount === 0) $tag = preg_replace('/<svg\b/i', '<svg height="25"', $tag, 1) ?? $tag;
+                return $tag;
+            }, $body, 1) ?? $body;
             return $body;
+        }
+        if ($extension === 'ico') {
+            $body = $this->extractIcoImage($body);
+            if ($body === null) return null;
         }
         if (!function_exists('imagecreatefromstring') || !function_exists('imagewebp')) return null;
         $size = @getimagesizefromstring($body);
@@ -99,6 +132,39 @@ final class FaviconFetcher
         ob_start(); $ok = imagewebp($thumbnail, null, 82); $result = ob_get_clean();
         imagedestroy($source); imagedestroy($thumbnail);
         return $ok && is_string($result) ? $result : null;
+    }
+
+    private function extractIcoImage(string $ico): ?string
+    {
+        if (strlen($ico) < 22 || substr($ico, 0, 4) !== "\0\0\x01\0") return null;
+        $count = unpack('v', substr($ico, 4, 2))[1] ?? 0;
+        $pngImage = null;
+        $dibImage = null;
+        for ($index = 0; $index < min($count, 64); ++$index) {
+            $entry = substr($ico, 6 + ($index * 16), 16);
+            if (strlen($entry) !== 16) break;
+            $values = unpack('Cwidth/Cheight/Ccolors/Creserved/vplanes/vbits/Vlength/Voffset', $entry);
+            $length = $values['length']; $offset = $values['offset'];
+            if ($length < 8 || $offset < 22 || $offset + $length > strlen($ico)) continue;
+            $image = substr($ico, $offset, $length);
+            if (str_starts_with($image, "\x89PNG\r\n\x1a\n")) {
+                $pngImage ??= $image;
+                continue;
+            }
+            if (strlen($image) < 40) continue;
+            $headerSize = unpack('V', substr($image, 0, 4))[1] ?? 0;
+            $storedHeight = unpack('V', substr($image, 8, 4))[1] ?? 0;
+            if ($headerSize < 40 || $headerSize > strlen($image) || $storedHeight < 2) continue;
+            $dib = substr_replace($image, pack('V', intdiv($storedHeight, 2)), 8, 4);
+            $bits = unpack('v', substr($dib, 14, 2))[1] ?? 32;
+            $colors = unpack('V', substr($dib, 32, 4))[1] ?? 0;
+            $paletteColors = $colors ?: ($bits <= 8 ? 1 << $bits : 0);
+            $pixelOffset = 14 + $headerSize + ($paletteColors * 4);
+            $bmp = pack('a2VvvV', 'BM', 14 + strlen($dib), 0, 0, $pixelOffset).$dib;
+            $dibImage ??= $bmp;
+        }
+
+        return $pngImage ?? $dibImage;
     }
 
     /** @param array<string, mixed> $parts */
@@ -130,10 +196,20 @@ final class FaviconFetcher
     }
 
     /** @param array<string, mixed> $pageParts @param array<string, mixed> $iconParts */
-    private function clientFor(array $pageParts, array $iconParts): HttpClientInterface
+    private function clientFor(array $pageParts, array $iconParts, ?string $resolvedPrivateIp = null): HttpClientInterface
     {
-        if ($this->isLanAddress((string) ($pageParts['host'] ?? '')) && $this->sameOrigin($pageParts, $iconParts)) {
-            return $this->client;
+        $host = (string) ($pageParts['host'] ?? '');
+        if ($this->sameInternalHost($pageParts, $iconParts) && $resolvedPrivateIp !== null) {
+            // Pin the internal hostname to its resolved LAN address. Callers also
+            // restrict redirects to the same hostname, so it cannot pivot to another host.
+            $options = ['resolve' => [$host => $resolvedPrivateIp]];
+            if ($this->isWipHost($host)) {
+                // Local development certificates are issued by the host's local CA,
+                // which is not installed in the worker container.
+                $options['verify_peer'] = false;
+            }
+
+            return $this->client->withOptions($options);
         }
 
         return $this->safeClient;
@@ -146,6 +222,12 @@ final class FaviconFetcher
             && strtolower(trim((string) ($first['host'] ?? ''), '[]')) === strtolower(trim((string) ($second['host'] ?? ''), '[]'))
             && (int) ($first['port'] ?? (strtolower((string) ($first['scheme'] ?? '')) === 'https' ? 443 : 80))
                 === (int) ($second['port'] ?? (strtolower((string) ($second['scheme'] ?? '')) === 'https' ? 443 : 80));
+    }
+
+    /** @param array<string, mixed> $first @param array<string, mixed> $second */
+    private function sameInternalHost(array $first, array $second): bool
+    {
+        return strtolower(trim((string) ($first['host'] ?? ''), '[]')) === strtolower(trim((string) ($second['host'] ?? ''), '[]'));
     }
 
     private function isLanAddress(string $host): bool
@@ -163,35 +245,102 @@ final class FaviconFetcher
         return $first === 10 || ($first === 172 && $second >= 16 && $second <= 31) || ($first === 192 && $second === 168);
     }
 
+    private function privateAddressForHost(string $host): ?string
+    {
+        $cacheKey = strtolower(trim($host, '[]'));
+        if (array_key_exists($cacheKey, $this->privateAddressCache)) {
+            return $this->privateAddressCache[$cacheKey];
+        }
+
+        $literal = trim($host, '[]');
+        if (filter_var($literal, FILTER_VALIDATE_IP) !== false) {
+            return $this->privateAddressCache[$cacheKey] = $this->isLanAddress($literal) ? $literal : null;
+        }
+
+        // Internal DNS entries in Docker can briefly return an empty result while
+        // the resolver refreshes a zero-TTL record. Retry before falling back to the
+        // public SSRF-safe client, otherwise an internal favicon is missed randomly.
+        for ($attempt = 0; $attempt < 3; ++$attempt) {
+            $records = @dns_get_record($host, DNS_A | DNS_AAAA) ?: [];
+            foreach ($records as $record) {
+                $ip = $record['ip'] ?? $record['ipv6'] ?? null;
+                if (is_string($ip) && $this->isLanAddress($ip)) {
+                    return $this->privateAddressCache[$cacheKey] = $ip;
+                }
+            }
+            $fallback = gethostbyname($host);
+            if ($fallback !== $host && $this->isLanAddress($fallback)) {
+                return $this->privateAddressCache[$cacheKey] = $fallback;
+            }
+            if ($attempt < 2) usleep(10_000);
+        }
+
+        // In Docker, local *.wip names can resolve to 127.0.0.1 on the host.
+        // That address points back into the worker container, so route those names
+        // through the shared reverse proxy when one is configured.
+        if ($this->isWipHost($host) && ($proxyHost = getenv('NEOX_BOARD_INTERNAL_PROXY_HOST')) !== false && $proxyHost !== '') {
+            $proxyIp = filter_var($proxyHost, FILTER_VALIDATE_IP) !== false ? $proxyHost : gethostbyname($proxyHost);
+            if ($proxyIp !== $proxyHost || filter_var($proxyHost, FILTER_VALIDATE_IP) !== false) {
+                return $this->privateAddressCache[$cacheKey] = $this->isLanAddress($proxyIp) ? $proxyIp : null;
+            }
+        }
+
+        return $this->privateAddressCache[$cacheKey] = null;
+    }
+
+    private function isWipHost(string $host): bool
+    {
+        return str_ends_with(strtolower(rtrim($host, '.')), '.wip');
+    }
+
     /** @return array{body: string, link_headers: list<string>}|null */
-    private function download(HttpClientInterface $client, string $url, int $maximumBytes, int $maximumRedirects, bool $icon = false): ?array
+    private function download(HttpClientInterface $client, string $url, int $maximumBytes, int $maximumRedirects, bool $icon = false, ?string $pinnedHost = null): ?array
     {
         try {
-            $response = $client->request('GET', $url, [
-                'max_redirects' => $maximumRedirects,
-                'timeout' => 2.0,
-                'max_duration' => 3.0,
-                'headers' => ['Accept' => $icon ? 'image/*,application/octet-stream;q=0.8' : 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.2'],
-            ]);
-            if ($response->getStatusCode() !== 200) {
-                $response->cancel();
-                return null;
-            }
-
-            $body = '';
-            foreach ($client->stream($response, 0.25) as $chunk) {
-                if ($chunk->isTimeout()) {
+            $redirects = 0;
+            while (true) {
+                $response = $client->request('GET', $url, [
+                    // Private hosts are followed manually so a redirect cannot escape
+                    // the resolved host/IP pair. Public hosts retain normal redirects.
+                    'max_redirects' => $pinnedHost === null ? $maximumRedirects : 0,
+                    'timeout' => 2.0,
+                    'max_duration' => 3.0,
+                    'headers' => ['Accept' => $icon ? 'image/*,application/octet-stream;q=0.8' : 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.2'],
+                ]);
+                $status = $response->getStatusCode();
+                if ($pinnedHost !== null && in_array($status, [301, 302, 303, 307, 308], true) && $redirects < $maximumRedirects) {
+                    $location = $response->getHeaders(false)['location'][0] ?? null;
+                    $nextUrl = is_string($location) ? $this->resolveUrl($location, $url) : null;
+                    $nextParts = $nextUrl !== null ? parse_url($nextUrl) : false;
+                    if (!is_array($nextParts) || strtolower((string) ($nextParts['host'] ?? '')) !== strtolower($pinnedHost)) {
+                        $response->cancel();
+                        return null;
+                    }
+                    $response->cancel();
+                    $url = $nextUrl;
+                    ++$redirects;
                     continue;
                 }
-                $body .= $chunk->getContent();
-                if (strlen($body) > $maximumBytes) {
+                if ($status !== 200) {
                     $response->cancel();
                     return null;
                 }
-            }
 
-            $headers = $response->getHeaders(false);
-            return ['body' => $body, 'link_headers' => array_values($headers['link'] ?? [])];
+                $body = '';
+                foreach ($client->stream($response, 0.25) as $chunk) {
+                    if ($chunk->isTimeout()) {
+                        continue;
+                    }
+                    $body .= $chunk->getContent();
+                    if (strlen($body) > $maximumBytes) {
+                        $response->cancel();
+                        return null;
+                    }
+                }
+
+                $headers = $response->getHeaders(false);
+                return ['body' => $body, 'link_headers' => array_values($headers['link'] ?? [])];
+            }
         } catch (\Throwable) {
             return null;
         }

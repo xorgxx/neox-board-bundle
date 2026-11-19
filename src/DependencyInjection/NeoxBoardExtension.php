@@ -33,8 +33,7 @@ final class NeoxBoardExtension extends Extension implements PrependExtensionInte
         ]);
         $container->prependExtensionConfig('framework', [
             'messenger' => [
-                'transports' => ['neox_board_favicon' => 'doctrine://default?queue_name=neox_board_favicon&auto_setup=1'],
-                'routing' => [\Neox\BoardBundle\Message\FetchFavicon::class => 'neox_board_favicon'],
+                'routing' => [\Neox\BoardBundle\Message\FetchFavicon::class => 'async'],
             ],
         ]);
     }
