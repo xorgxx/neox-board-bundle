@@ -56,15 +56,15 @@ test('link check shows batch progress and updates indicators and unavailable lin
   if (!window.CSS) window.CSS = global.CSS;
   const requests = [];
   const batches = [
-    { total: 5, processed: 2, active: 1, faviconsFound: 1, done: false, results: [
+    { total: 5, processed: 2, active: 1, faviconsQueued: 1, done: false, results: [
       { id: 'live', title: 'Live', active: true, label: 'Actif' },
       { id: 'dead', title: 'Dead', active: false, label: 'Lien introuvable' },
     ] },
-    { total: 5, processed: 4, active: 2, faviconsFound: 0, done: false, results: [
+    { total: 5, processed: 4, active: 2, faviconsQueued: 0, done: false, results: [
       { id: 'other-live', title: 'Other live', active: true, label: 'Actif' },
       { id: 'another-live', title: 'Another live', active: true, label: 'Actif' },
     ] },
-    { total: 5, processed: 5, active: 1, faviconsFound: 1, done: true, results: [
+    { total: 5, processed: 5, active: 1, faviconsQueued: 1, done: true, results: [
       { id: 'later', title: 'Later', active: true, label: 'Actif' },
     ] },
   ];
@@ -101,7 +101,7 @@ test('link check shows batch progress and updates indicators and unavailable lin
   assert.equal(controller.buttonTarget.disabled, false);
   assert.equal(controller.progressTarget.value, 5);
   assert.match(controller.statusTarget.textContent, /4 \/ 5 liens accessibles/);
-  assert.match(controller.statusTarget.textContent, /2 favicons récupérées/);
+  assert.match(controller.statusTarget.textContent, /2 favicons mises en file/);
   assert.equal(document.querySelector('[data-link-availability-arrow="live"]').classList.contains('is-active'), true);
   assert.equal(document.querySelector('[data-link-availability-arrow="dead"]').classList.contains('is-inactive'), true);
   assert.equal(document.querySelector('[data-link-availability-arrow="later"]').classList.contains('is-active'), true);

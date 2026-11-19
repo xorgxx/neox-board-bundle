@@ -4,13 +4,12 @@ namespace Neox\BoardBundle\Controller;
 use Doctrine\ORM\EntityManagerInterface;
 use Neox\BoardBundle\Entity\{Board,Space,Link,Activity,Section,Widget};
 use Neox\BoardBundle\Realtime\DashboardBroadcaster;
-use Neox\BoardBundle\Service\FaviconFetcher;
+use Neox\BoardBundle\Service\FaviconQueue;
 use Neox\BoardBundle\Service\LinkAvailabilityChecker;
 use Neox\BoardBundle\Service\WeatherForecastProvider;
 use Neox\BoardBundle\Service\CalendarObservancesProvider;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\HttpFoundation\{Request,Response,RedirectResponse,JsonResponse};
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\File\UploadedFile;
 use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
@@ -24,7 +23,7 @@ use Symfony\Component\Security\Core\User\UserInterface;
 final class DashboardController extends AbstractController
 {
  private const MAX_EXTERNAL_DROP_LINKS = 100;
- public function __construct(private EntityManagerInterface $em, private ValidatorInterface $validator, private CsrfTokenManagerInterface $csrf, private DashboardBroadcaster $broadcaster, private FaviconFetcher $favicons, private WeatherForecastProvider $weather, private CalendarObservancesProvider $observances, private KernelInterface $kernel){}
+ public function __construct(private EntityManagerInterface $em, private ValidatorInterface $validator, private CsrfTokenManagerInterface $csrf, private DashboardBroadcaster $broadcaster, private FaviconQueue $faviconQueue, private WeatherForecastProvider $weather, private CalendarObservancesProvider $observances, private KernelInterface $kernel){}
  private function board(): Board { $u=$this->getUser(); if(!$u instanceof UserInterface || !method_exists($u,'getUserIdentifier')) throw $this->createAccessDeniedException(); $key=$u->getUserIdentifier(); $repo=$this->em->getRepository(Board::class); $board=$repo->findOneBy(['ownerKey'=>$key]); if(!$board){$board=new Board($key);$this->em->persist($board);$this->em->flush();} return $board; }
  #[Route('',name:'index',methods:['GET'])]
  #[Route('/spaces',name:'spaces',methods:['GET'])]
@@ -423,6 +422,7 @@ final class DashboardController extends AbstractController
    $space->addLink($link);
   }
   $this->em->flush();
+  foreach ($inspection['ready'] as $link) $this->faviconQueue->dispatch($link);
   return $this->completeMutation($r);
  }
 
@@ -451,6 +451,7 @@ final class DashboardController extends AbstractController
      $this->inspectAddedLink($link, $checker);
      $space->addLink($link);
      $this->em->flush();
+     $this->faviconQueue->dispatch($link);
      return $this->completeMutation($request);
     }
    }
@@ -467,20 +468,20 @@ final class DashboardController extends AbstractController
  }
 
  #[Route('/links/{id}/favicon',name:'link_favicon',methods:['GET'],requirements:['id'=>'[0-9a-fA-F-]{36}'])]
- public function linkFavicon(string $id): Response
+ public function linkFavicon(string $id, Request $request): Response
  {
   $link = $this->ownedLink($id);
-  $filename = $link->getFaviconFilename();
-  $path = $filename === null ? null : $this->favicons->getPath($filename);
-  if ($path === null) throw $this->createNotFoundException();
-  $response = new BinaryFileResponse($path);
-  $response->setPublic();
-  $response->setMaxAge(604800);
+  $encoded = $link->getFaviconData();
+  if ($encoded === null || ($data = base64_decode($encoded, true)) === false) throw $this->createNotFoundException();
+  $type = str_starts_with($data, '<svg') || str_contains(substr($data, 0, 200), '<svg') ? 'image/svg+xml' : 'image/webp';
+  $etag = hash('sha256', $data);
+  $response = new Response($data);
+  $response->headers->set('Content-Type', $type);
+  $response->headers->set('Cache-Control', 'private, max-age=31536000, immutable');
+  $response->setEtag($etag);
+  $response->isNotModified($request);
   $response->headers->set('X-Content-Type-Options', 'nosniff');
-  if (str_ends_with(strtolower($filename), '.svg')) {
-   $response->headers->set('Content-Type', 'image/svg+xml');
-   $response->headers->set('Content-Security-Policy', "default-src 'none'; sandbox");
-  }
+  if ($type === 'image/svg+xml') $response->headers->set('Content-Security-Policy', "default-src 'none'; sandbox");
   return $response;
  }
  #[Route('/links/check-availability', name:'links_check_availability', methods:['POST'])]
@@ -499,20 +500,18 @@ final class DashboardController extends AbstractController
    $batch = array_slice($links, $offset, 2);
    $results = $checker->check($batch);
    $checkedAt = new \DateTimeImmutable();
-   $faviconsFound = 0;
+   $faviconsQueued = 0;
    foreach ($results as $index => $result) {
     $link = $batch[$index];
     $link->setAvailabilityStatus($result['active'], $checkedAt);
-    $hadFavicon = $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null;
-    if (!$hadFavicon) $this->favicons->fetchFor($link);
-    if (!$hadFavicon && $link->getFaviconFilename() !== null && $this->favicons->getPath($link->getFaviconFilename()) !== null) $faviconsFound++;
+    if ($link->getFaviconData() === null) { $this->faviconQueue->dispatch($link); ++$faviconsQueued; }
    }
    $this->em->flush();
    $processed = $offset + count($batch);
    $done = $processed >= $total;
    if ($done && $total > 0) $this->broadcaster->publishRefresh($board, $this->refreshRequestId($request));
    $active = count(array_filter($results, static fn (array $result): bool => $result['active']));
-   $response = new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results, 'faviconsFound' => $faviconsFound, 'total' => $total, 'processed' => $processed, 'done' => $done]);
+   $response = new JsonResponse(['checked' => count($results), 'active' => $active, 'results' => $results, 'faviconsQueued' => $faviconsQueued, 'total' => $total, 'processed' => $processed, 'done' => $done]);
    $response->headers->set('Cache-Control', 'private, no-store');
    return $response;
   }
@@ -522,7 +521,7 @@ final class DashboardController extends AbstractController
   foreach ($results as $index => $result) {
    $link = $links[$index];
    $link->setAvailabilityStatus($result['active'], $checkedAt);
-   if ($link->getFaviconFilename() === null || $this->favicons->getPath($link->getFaviconFilename()) === null) $this->favicons->fetchFor($link);
+   if ($link->getFaviconData() === null) $this->faviconQueue->dispatch($link);
   }
   $this->em->flush();
   $active = count(array_filter($results, static fn (array $result): bool => $result['active']));
@@ -549,7 +548,7 @@ final class DashboardController extends AbstractController
  #[Route('/links/{id}/delete',name:'link_delete',methods:['POST'])]
  public function deleteLink(string $id,Request $r):Response { $link=$this->em->getRepository(Link::class)->find($id);if(!$link||$link->getSpace()->getBoard()->getOwnerKey()!==$this->board()->getOwnerKey())throw $this->createNotFoundException();if(!$this->csrf->isTokenValid(new CsrfToken('link_delete_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$this->em->remove($link);$this->em->flush();return $this->completeMutation($r); }
  #[Route('/links/{id}/edit',name:'link_edit',methods:['GET','POST'])]
- public function editLink(string $id,Request $r):Response{$link=$this->ownedLink($id);$error=null;if($r->isMethod('POST')){if(!$this->csrf->isTokenValid(new CsrfToken('link_edit_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$previousUrl=$link->getUrl();$link->setTitle(trim((string)$r->request->get('title')));$link->setUrl($this->buildLinkUrl((string)$r->request->get('url', ''), (string)$r->request->get('url_scheme', 'https')));$errors=$this->validator->validate($link);if(count($errors))$error=(string)$errors[0]->getMessage();else{if($previousUrl!==$link->getUrl()){$link->setFaviconFilename(null);$link->setAvailabilityStatus(null);$this->favicons->fetchFor($link);}$this->em->flush();return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Lien','title'=>'Modifier le raccourci','space'=>$link->getSpace(),'link'=>$link,'error'=>$error,'token'=>$this->csrf->getToken('link_edit_'.$id)->getValue()]);}
+ public function editLink(string $id,Request $r):Response{$link=$this->ownedLink($id);$error=null;if($r->isMethod('POST')){if(!$this->csrf->isTokenValid(new CsrfToken('link_edit_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$previousUrl=$link->getUrl();$link->setTitle(trim((string)$r->request->get('title')));$link->setUrl($this->buildLinkUrl((string)$r->request->get('url', ''), (string)$r->request->get('url_scheme', 'https')));$errors=$this->validator->validate($link);if(count($errors))$error=(string)$errors[0]->getMessage();else{if($previousUrl!==$link->getUrl()){$link->setFaviconData(null);$link->setAvailabilityStatus(null);}$this->em->flush();if($previousUrl!==$link->getUrl())$this->faviconQueue->dispatch($link);return $this->completeMutation($r);}}return $this->render('@NeoxBoard/dashboard/form.html.twig',['kind'=>'Lien','title'=>'Modifier le raccourci','space'=>$link->getSpace(),'link'=>$link,'error'=>$error,'token'=>$this->csrf->getToken('link_edit_'.$id)->getValue()]);}
  #[Route('/links/{id}/favorite',name:'link_favorite',methods:['POST'])]
  public function toggleLinkFavorite(string $id,Request $r):Response{$l=$this->ownedLink($id);if(!$this->csrf->isTokenValid(new CsrfToken('link_favorite_'.$id,(string)$r->request->get('_token'))))throw $this->createAccessDeniedException();$l->toggleFavorite();$this->em->flush();return $this->completeMutation($r);}
  #[Route('/spaces/{id}/reorder',name:'space_reorder',methods:['POST'])]
@@ -672,7 +671,6 @@ final class DashboardController extends AbstractController
  private function refreshResponse(): Response { return new Response('<turbo-stream action="refresh" method="morph" scroll="preserve"></turbo-stream>', 200, ['Content-Type'=>'text/vnd.turbo-stream.html; charset=utf-8']); }
  private function inspectAddedLink(Link $link, LinkAvailabilityChecker $checker): void
  {
-  $this->favicons->fetchFor($link);
   $result = $checker->check([$link])[0] ?? null;
   if ($result !== null) $link->setAvailabilityStatus($result['active'], new \DateTimeImmutable());
  }

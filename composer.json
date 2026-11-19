@@ -5,6 +5,7 @@
   "license": "MIT",
   "require": {
     "php": "^8.4",
+    "ext-gd": "*",
     "symfony/config": "^8.0",
     "symfony/dependency-injection": "^8.0",
     "symfony/framework-bundle": "^8.0",

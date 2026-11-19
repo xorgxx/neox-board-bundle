@@ -18,7 +18,7 @@ export default class extends Controller {
     let offset = 0;
     let total = null;
     let active = 0;
-    let faviconsFound = 0;
+    let faviconsQueued = 0;
 
     try {
       while (total === null || offset < total) {
@@ -39,17 +39,17 @@ export default class extends Controller {
         total = data.total;
         offset = data.processed;
         active += data.active;
-        faviconsFound += data.faviconsFound;
+        faviconsQueued += data.faviconsQueued || 0;
         data.results.forEach((result) => this.updateIndicator(result));
         this.progressTarget.max = Math.max(total, 1);
         this.progressTarget.value = offset;
-        this.statusTarget.textContent = `Analyse en cours : ${offset} / ${total} liens · ${active} accessibles · ${faviconsFound} favicon${faviconsFound > 1 ? 's' : ''} récupérée${faviconsFound > 1 ? 's' : ''}.`;
+        this.statusTarget.textContent = `Analyse en cours : ${offset} / ${total} liens · ${active} accessibles · ${faviconsQueued} favicon${faviconsQueued > 1 ? 's' : ''} mise${faviconsQueued > 1 ? 's' : ''} en file.`;
         if (data.done) break;
       }
 
       this.statusTarget.textContent = total === 0
         ? 'Aucun lien à analyser.'
-        : `${active} / ${total} liens accessibles · ${faviconsFound} favicon${faviconsFound > 1 ? 's' : ''} récupérée${faviconsFound > 1 ? 's' : ''}.`;
+        : `${active} / ${total} liens accessibles · ${faviconsQueued} favicon${faviconsQueued > 1 ? 's' : ''} mise${faviconsQueued > 1 ? 's' : ''} en file.`;
     } catch {
       this.statusTarget.textContent = offset > 0
         ? `Vérification interrompue après ${offset} / ${total} liens. Réessaie pour terminer.`

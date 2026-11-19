@@ -31,6 +31,12 @@ final class NeoxBoardExtension extends Extension implements PrependExtensionInte
         $container->prependExtensionConfig('twig', [
             'paths' => [$bundlePath.'/templates' => 'NeoxBoard'],
         ]);
+        $container->prependExtensionConfig('framework', [
+            'messenger' => [
+                'transports' => ['neox_board_favicon' => 'doctrine://default?queue_name=neox_board_favicon&auto_setup=1'],
+                'routing' => [\Neox\BoardBundle\Message\FetchFavicon::class => 'neox_board_favicon'],
+            ],
+        ]);
     }
 
     public function load(array $configs, ContainerBuilder $container): void

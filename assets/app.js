@@ -94,4 +94,4 @@ document.addEventListener('turbo:morph', () => {
 });
 installSectionTabsFrameRefresh(document, app);
 window.NeoxBoard = { Turbo, app, rememberMovementFocus };
-document.cookie = 'neox_board_asset=202611130009; Path=/; Max-Age=2592000; SameSite=Lax';
+document.cookie = 'neox_board_asset=20261119120000; Path=/; Max-Age=2592000; SameSite=Lax';

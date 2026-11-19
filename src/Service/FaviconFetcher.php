@@ -9,7 +9,6 @@ use DOMElement;
 use DOMXPath;
 use Neox\BoardBundle\Entity\Link;
 use Symfony\Component\HttpClient\NoPrivateNetworkHttpClient;
-use Symfony\Component\HttpKernel\KernelInterface;
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 /** Retrieves and stores site icons advertised in HTML or HTTP Link headers. */
@@ -17,14 +16,14 @@ final class FaviconFetcher
 {
     private HttpClientInterface $safeClient;
 
-    public function __construct(private readonly KernelInterface $kernel, private readonly HttpClientInterface $client)
+    public function __construct(private readonly HttpClientInterface $client)
     {
         $this->safeClient = new NoPrivateNetworkHttpClient($client);
     }
 
     public function fetchFor(Link $link): void
     {
-        if ($link->getFaviconFilename() !== null && $this->getPath($link->getFaviconFilename()) !== null) {
+        if ($link->getFaviconData() !== null) {
             return;
         }
 
@@ -70,16 +69,36 @@ final class FaviconFetcher
                 }
             }
 
-            $directory = $this->kernel->getProjectDir().'/var/neox-board/favicons';
-            if (!is_dir($directory) && !@mkdir($directory, 0770, true) && !is_dir($directory)) {
-                return;
-            }
-            $filename = hash('sha256', $candidate).'.'.$extension;
-            if (@file_put_contents($directory.'/'.$filename, $body, LOCK_EX) !== false) {
-                $link->setFaviconFilename($filename);
-                return;
-            }
+            $thumbnail = $this->thumbnail($body, $extension);
+            if ($thumbnail !== null) $link->setFaviconData(base64_encode($thumbnail));
+            if ($thumbnail !== null) return;
         }
+    }
+
+    private function thumbnail(string $body, string $extension): ?string
+    {
+        if ($extension === 'svg') {
+            $body = preg_replace('/<svg\b(?![^>]*\bwidth=)/i', '<svg width="25"', $body, 1) ?? $body;
+            $body = preg_replace('/<svg\b(?![^>]*\bheight=)/i', '<svg height="25"', $body, 1) ?? $body;
+            return $body;
+        }
+        if (!function_exists('imagecreatefromstring') || !function_exists('imagewebp')) return null;
+        $size = @getimagesizefromstring($body);
+        if (!is_array($size) || ($size[0] * $size[1]) > 16_000_000) return null;
+        $source = @imagecreatefromstring($body);
+        if ($source === false) return null;
+        $thumbnail = imagecreatetruecolor(25, 25);
+        imagealphablending($thumbnail, false);
+        imagesavealpha($thumbnail, true);
+        $transparent = imagecolorallocatealpha($thumbnail, 0, 0, 0, 127);
+        imagefilledrectangle($thumbnail, 0, 0, 24, 24, $transparent);
+        $width = imagesx($source); $height = imagesy($source);
+        $scale = min(25 / max(1, $width), 25 / max(1, $height));
+        $targetWidth = max(1, (int) round($width * $scale)); $targetHeight = max(1, (int) round($height * $scale));
+        imagecopyresampled($thumbnail, $source, intdiv(25 - $targetWidth, 2), intdiv(25 - $targetHeight, 2), 0, 0, $targetWidth, $targetHeight, $width, $height);
+        ob_start(); $ok = imagewebp($thumbnail, null, 82); $result = ob_get_clean();
+        imagedestroy($source); imagedestroy($thumbnail);
+        return $ok && is_string($result) ? $result : null;
     }
 
     /** @param array<string, mixed> $parts */
@@ -349,15 +368,6 @@ final class FaviconFetcher
             libxml_clear_errors();
             libxml_use_internal_errors($previous);
         }
-    }
-
-    public function getPath(string $filename): ?string
-    {
-        if (preg_match('/\A[a-f0-9]{64}\.(?:ico|png|jpg|gif|webp|avif|bmp|svg)\z/', $filename) !== 1) {
-            return null;
-        }
-        $path = $this->kernel->getProjectDir().'/var/neox-board/favicons/'.$filename;
-        return is_file($path) ? $path : null;
     }
 
     private function detectImageExtension(string $body): ?string
